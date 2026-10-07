@@ -1,0 +1,18 @@
+name: msys2-runtime fork under ASLR in Windows containers
+on: [push, workflow_dispatch]
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            base: mcr.microsoft.com/windows/servercore:ltsc2022
+          - runner: windows-2025
+            base: mcr.microsoft.com/windows/servercore:ltsc2025
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run fork tests in containers
+        shell: pwsh
+        run: ./run-tests.ps1 -Base "${{ matrix.base }}"
