@@ -16,3 +16,14 @@ jobs:
       - name: Run fork tests in containers
         shell: pwsh
         run: ./run-tests.ps1 -Base "${{ matrix.base }}"
+  deps-first:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: stock vs deps-only vs all flagged, Mandatory ASLR off then on
+        shell: pwsh
+        run: ./deps-first.ps1
