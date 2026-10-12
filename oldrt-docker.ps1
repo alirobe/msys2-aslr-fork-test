@@ -15,7 +15,7 @@ Start-Sleep 5
 New-Item -ItemType Directory "$root\ctx\rt" | Out-Null
 Copy-Item "$root\ctx\msys64\usr\bin\msys-2.0.dll" "$root\ctx\rt\msys-2.0.dll.336"
 Copy-Item "$root\now\msys64\usr\bin\msys-2.0.dll" "$root\ctx\rt\msys-2.0.dll.now"
-if ($OldRuntimeUrl) { Invoke-WebRequest -Uri $OldRuntimeUrl -OutFile "$root\ctxt\msys-2.0.dll.343" }
+if ($OldRuntimeUrl) { Invoke-WebRequest -Uri $OldRuntimeUrl -OutFile "$root\ctx\rt\msys-2.0.dll.343" }
 elseif ($OldRuntimeDll) { Copy-Item $OldRuntimeDll "$root\ctx\rt\msys-2.0.dll.343" }
 elseif ($OldRuntimePkg) { & "$root\now\msys64\usr\bin\bash.exe" -lc "tar -xf '$(& "$root\now\msys64\usr\bin\cygpath.exe" -u $OldRuntimePkg)' -C /tmp usr/bin/msys-2.0.dll && cp /tmp/usr/bin/msys-2.0.dll '$(& "$root\now\msys64\usr\bin\cygpath.exe" -u "$root\ctx\rt\msys-2.0.dll.343")'" }
 Copy-Item "$root\oldrt-test.ps1" "$root\ctx\"
