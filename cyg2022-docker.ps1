@@ -8,7 +8,7 @@ $root = $PSScriptRoot
 $ctm = "http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin"
 Invoke-WebRequest -UserAgent "Mozilla/5.0" -Uri "$ctm/setup/snapshots/setup-x86_64-2.924.exe" -OutFile "$root\setup.exe"
 New-Item -ItemType Directory "$root\ctx" | Out-Null
-& "$root\setup.exe" -q -n -N -d -O -W -s "$ctm/circa/64bit/2022/12/20/144651" -R "$root\ctx\cygwin" -l "$root\cygpkgs" -P bash,coreutils,sed,findutils,gnupg2,make,grep | Out-Null
+& "$root\setup.exe" -q -B -n -N -d -O -W -X -s "$ctm/circa/64bit/2022/12/20/144651" -R "$root\ctx\cygwin" -l "$root\cygpkgs" -P bash,coreutils,sed,findutils,gnupg2,make,grep | Select-Object -Last 8
 Invoke-WebRequest -Uri "https://mirrors.kernel.org/sourceware/cygwin/x86_64/release/cygwin/cygwin-3.6.11-1-x86_64.tar.xz" -OutFile "$root\cygwin-3.6.11.tar.xz"
 New-Item -ItemType Directory "$root\now", "$root\ctx\rt" | Out-Null
 tar -xJf "$root\cygwin-3.6.11.tar.xz" -C "$root\now" usr/bin/cygwin1.dll
