@@ -6,6 +6,9 @@
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2022", [string[]]$Isolations = @('process', 'hyperv'),
       [string]$OldRuntimePkg, [string]$OldRuntimeDll, [string]$OldRuntimeUrl)
 $ErrorActionPreference = "Continue"
+# windows-2025 runners sometimes come up without the Docker service running.
+Start-Service docker -ErrorAction SilentlyContinue
+for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
 $root = $PSScriptRoot
 Invoke-WebRequest -Uri "https://github.com/msys2/msys2-installer/releases/download/2022-12-16/msys2-base-x86_64-20221216.sfx.exe" -OutFile "$root\base2022.sfx.exe"
 & "$root\base2022.sfx.exe" -y -o"$root\ctx" | Out-Null

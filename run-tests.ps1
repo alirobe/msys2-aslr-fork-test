@@ -1,6 +1,9 @@
 # Runs inside the GitHub Actions Windows runner. Builds two images (stock DLL, dynamicbase DLL) and runs fork tests in both isolation modes available.
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2022", [string]$GitTag = "v2.56.0.windows.2", [string]$GitAsset = "PortableGit-2.56.0.2-64-bit.7z.exe")
 $ErrorActionPreference = "Continue"
+# windows-2025 runners sometimes come up without the Docker service running.
+Start-Service docker -ErrorAction SilentlyContinue
+for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
 $root = $PSScriptRoot
 Invoke-WebRequest -Uri "https://github.com/git-for-windows/git/releases/download/$GitTag/$GitAsset" -OutFile "$root\PortableGit.7z.exe"
 & "$root\PortableGit.7z.exe" -o"$root\pg" -y | Out-Null

@@ -4,6 +4,9 @@
 # and today's 3.6.11 DLL dropped into the same install.
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2022", [string[]]$Isolations = @('process', 'hyperv'))
 $ErrorActionPreference = "Continue"
+# windows-2025 runners sometimes come up without the Docker service running.
+Start-Service docker -ErrorAction SilentlyContinue
+for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
 $root = $PSScriptRoot
 $ctm = "http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin"
 Invoke-WebRequest -UserAgent "Mozilla/5.0" -Uri "$ctm/setup/snapshots/setup-x86_64-2.924.exe" -OutFile "$root\setup.exe"
