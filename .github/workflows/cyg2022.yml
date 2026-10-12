@@ -1,0 +1,23 @@
+name: Cygwin December 2022 (3.4.3, first dynamicbase DLL) in Windows containers
+on: workflow_dispatch
+jobs:
+  cyg2022:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            base: mcr.microsoft.com/windows/servercore:ltsc2022
+            isolations: process,hyperv
+          - runner: windows-2022
+            base: mcr.microsoft.com/windows/servercore:ltsc2019
+            isolations: hyperv
+          - runner: windows-2025
+            base: mcr.microsoft.com/windows/servercore:ltsc2025
+            isolations: process,hyperv
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: cygwin 3.4.3 as shipped / bit cleared / 3.6.11, in a container
+        shell: pwsh
+        run: ./cyg2022-docker.ps1 -Base "${{ matrix.base }}" -Isolations ("${{ matrix.isolations }}" -split ',')
