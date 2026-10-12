@@ -1,0 +1,28 @@
+name: MSYS2 December 2022 base with the 3.4.3 dynamicbase runtime, pacman in Windows containers
+on:
+  workflow_dispatch:
+    inputs:
+      dll_url:
+        description: URL of msys2-runtime 3.4.3-1 msys-2.0.dll rebuilt from the 2022-12-16 PKGBUILD
+        required: true
+jobs:
+  oldrt:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            base: mcr.microsoft.com/windows/servercore:ltsc2022
+            isolations: process,hyperv
+          - runner: windows-2022
+            base: mcr.microsoft.com/windows/servercore:ltsc2019
+            isolations: hyperv
+          - runner: windows-2025
+            base: mcr.microsoft.com/windows/servercore:ltsc2025
+            isolations: process,hyperv
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: runtime 3.3.6 / 3.4.3 / 3.4.3 bit cleared / today, pacman in a container
+        shell: pwsh
+        run: ./oldrt-docker.ps1 -Base "${{ matrix.base }}" -Isolations ("${{ matrix.isolations }}" -split ',') -OldRuntimeUrl "${{ inputs.dll_url }}"
