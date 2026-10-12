@@ -47,14 +47,3 @@ jobs:
       - name: full MSYS2 in a container, pacman and a fork scale test, stock / dyn / all
         shell: pwsh
         run: ./pacman-docker.ps1 -Base "${{ matrix.base }}" -Isolations ("${{ matrix.isolations }}" -split ',')
-  ifeo:
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [windows-2022, windows-2025]
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Mandatory ASLR and Bottom-up ASLR per process, stock / deps / all / allexe
-        shell: pwsh
-        run: ./ifeo.ps1

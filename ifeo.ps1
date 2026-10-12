@@ -1,7 +1,7 @@
 # Runs on a GitHub Actions Windows runner. Per-process mitigations (IFEO) apply to new processes without a reboot, unlike
 # the system-wide setting, so this is how a runner can test Mandatory ASLR. Four usr\bin variants of Portable Git:
 # stock, deps (every DLL but the runtime flagged), all (every DLL), allexe (every DLL and exe). Two passes: Mandatory ASLR
-# forced on the test exes, then Mandatory plus Bottom-up ASLR. Bottom-up matters because a force-relocated exe is only
+# forced on the test exes, then plus Bottom-up ASLR, then plus High-entropy ASLR (which Cygwin deliberately leaves off). Bottom-up matters because a force-relocated exe is only
 # randomised when bottom-up randomisation is on; otherwise it lands at the same low address in every process.
 param([string]$GitTag = "v2.56.0.windows.2", [string]$GitAsset = "PortableGit-2.56.0.2-64-bit.7z.exe")
 $ErrorActionPreference = "Continue"
@@ -40,11 +40,20 @@ RunAll "A. no per-process mitigations"
 foreach ($e in $exes) { Set-ProcessMitigation -Name $e -Enable ForceRelocateImages }
 "bash.exe mitigations now: $((Get-ProcessMitigation -Name bash.exe).ASLR | Out-String)"
 RunAll "B. IFEO ForceRelocateImages on the test exes"
+function Scale($v, $n, $p, $m) {
+    "--- scale on $v`: $n subshells, ${p}x$m parallel, 200 timeout, 200 pipe"
+    cmd /c "`"$root\$v\usr\bin\bash.exe`" --norc /scale.sh $n $p $m > `"$root\scale.log`" 2>&1"
+    Get-Content "$root\scale.log" | Where-Object { $_ -notmatch 'dofork|fork: retry|child_copy|child_info_fork' }
+    "fork errors: $((Get-Content "$root\scale.log" | Where-Object { $_ -match 'dofork|child_info_fork|child_copy' }).Count)"
+    Get-Content "$root\scale.log" | Where-Object { $_ -match 'child_copy|child_info_fork' } | Select-Object -First 2
+}
+foreach ($e in $exes) { Set-ProcessMitigation -Name $e -Enable ForceRelocateImages, BottomUp }
+"bash.exe mitigations now: $((Get-ProcessMitigation -Name bash.exe).ASLR | Out-String)"
+RunAll "C. IFEO ForceRelocateImages + BottomUp on the test exes"
+Scale all 1000 4 100
+Scale allexe 2000 8 250
 foreach ($e in $exes) { Set-ProcessMitigation -Name $e -Enable ForceRelocateImages, BottomUp, HighEntropy }
 "bash.exe mitigations now: $((Get-ProcessMitigation -Name bash.exe).ASLR | Out-String)"
-RunAll "C. IFEO ForceRelocateImages + BottomUp + HighEntropy on the test exes"
-"--- scale on the allexe variant under C"
-cmd /c "`"$root\allexe\usr\bin\bash.exe`" --norc /scale.sh 2000 8 250 > `"$root\scale.log`" 2>&1"
-Get-Content "$root\scale.log" | Where-Object { $_ -notmatch 'dofork|fork: retry' }
-"fork errors: $((Get-Content "$root\scale.log" | Where-Object { $_ -match 'dofork|child_info_fork|child_copy' }).Count)"
+RunAll "D. IFEO ForceRelocateImages + BottomUp + HighEntropy on the test exes"
+Scale allexe 2000 8 250
 "done"
