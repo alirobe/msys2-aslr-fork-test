@@ -10,7 +10,7 @@ for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
 $root = $PSScriptRoot
 $ctm = "http://ctm.crouchingtigerhiddenfruitbat.org/pub/cygwin"
 "stage: download setup.exe from the Time Machine"
-Invoke-WebRequest -UserAgent "Mozilla/5.0" -Uri "$ctm/setup/snapshots/setup-x86_64-2.924.exe" -OutFile "$root\setup.exe"
+Invoke-WebRequest -TimeoutSec 300 -UserAgent "Mozilla/5.0" -Uri "$ctm/setup/snapshots/setup-x86_64-2.924.exe" -OutFile "$root\setup.exe"
 New-Item -ItemType Directory "$root\ctx" | Out-Null
 "stage: run setup.exe"
 $p = Start-Process -FilePath "$root\setup.exe" -ArgumentList @('-q','-B','-n','-N','-d','-O','-W','-X','-s',"$ctm/circa/64bit/2022/12/20/144651",'-R',"$root\ctx\cygwin",'-l',"$root\cygpkgs",'-P','bash,coreutils,sed,findutils,gnupg2,make,grep') -RedirectStandardOutput "$root\setup.log" -PassThru
@@ -18,7 +18,14 @@ if (-not $p.WaitForExit(900000)) { "setup.exe still running after 15 min; killin
 Get-Content "$root\setup.log" | Select-Object -Last 8
 "stage: setup.exe finished, exit $($p.ExitCode)"
 "stage: download cygwin 3.6.11"
-Invoke-WebRequest -Uri "https://mirrors.kernel.org/sourceware/cygwin/x86_64/release/cygwin/cygwin-3.6.11-1-x86_64.tar.xz" -OutFile "$root\cygwin-3.6.11.tar.xz"
+# Invoke-WebRequest to mirrors.kernel.org never returns on windows-2022 runners; curl with a cap and fallbacks.
+$rel = "x86_64/release/cygwin/cygwin-3.6.11-1-x86_64.tar.xz"
+foreach ($m in "https://mirrors.kernel.org/sourceware/cygwin", "https://cygwin.mirror.constant.com", "https://mirror.clarkson.edu/cygwin", "https://ftp.fau.de/cygwin", "https://mirrors.sonic.net/cygwin") {
+  "  trying $m"
+  curl.exe -sSL --connect-timeout 20 --max-time 240 -o "$root\cygwin-3.6.11.tar.xz" "$m/$rel"
+  if ($LASTEXITCODE -eq 0 -and (Get-Item "$root\cygwin-3.6.11.tar.xz" -ErrorAction SilentlyContinue).Length -gt 1000000) { break }
+}
+"stage: extract cygwin 3.6.11 ($((Get-Item "$root\cygwin-3.6.11.tar.xz").Length) bytes)"
 New-Item -ItemType Directory "$root\now", "$root\ctx\rt" | Out-Null
 tar -xJf "$root\cygwin-3.6.11.tar.xz" -C "$root\now" usr/bin/cygwin1.dll
 Copy-Item "$root\ctx\cygwin\bin\cygwin1.dll" "$root\ctx\rt\cygwin1.dll.343"

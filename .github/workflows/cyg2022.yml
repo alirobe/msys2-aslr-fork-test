@@ -20,5 +20,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: cygwin 3.4.3 as shipped / bit cleared / 3.6.11, in a container
         shell: pwsh
-        timeout-minutes: 40
+        timeout-minutes: 90
         run: ./cyg2022-docker.ps1 -Base "${{ matrix.base }}" -Isolations ("${{ matrix.isolations }}" -split ',')
