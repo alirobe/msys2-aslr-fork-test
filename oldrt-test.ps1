@@ -34,3 +34,5 @@ Run 'pacman -Qi bash, -Ss make' 'pacman -Qi bash | head -3; pacman -Ss ^make$ | 
 Run 'makepkg --version, gpg --version' 'makepkg --version | head -1; gpg --version | head -1'
 Run 'scale: 1000 subshells, 8x100 parallel, 200 timeout, 200 pipe' '/scale.sh 1000 8 100'
 "==== runtime=$Variant total fork errors: $total"
+# gpg-agent and friends outlive the script and keep the container's stdout open under Hyper-V isolation.
+Get-Process gpg-agent, dirmngr, keyboxd, scdaemon -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue

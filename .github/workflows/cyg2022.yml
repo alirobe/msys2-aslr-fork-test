@@ -8,13 +8,13 @@ jobs:
         include:
           - runner: windows-2022
             base: mcr.microsoft.com/windows/servercore:ltsc2022
-            isolations: process,hyperv
+            isolations: hyperv,process
           - runner: windows-2022
             base: mcr.microsoft.com/windows/servercore:ltsc2019
             isolations: hyperv
           - runner: windows-2025
             base: mcr.microsoft.com/windows/servercore:ltsc2025
-            isolations: process,hyperv
+            isolations: hyperv,process
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4

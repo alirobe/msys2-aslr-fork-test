@@ -27,9 +27,11 @@ foreach ($m in "https://mirrors.kernel.org/sourceware/cygwin", "https://cygwin.m
 }
 "stage: extract cygwin 3.6.11 ($((Get-Item "$root\cygwin-3.6.11.tar.xz").Length) bytes)"
 New-Item -ItemType Directory "$root\now", "$root\ctx\rt" | Out-Null
-tar -xJf "$root\cygwin-3.6.11.tar.xz" -C "$root\now" usr/bin/cygwin1.dll
+# tar -xJf never finishes on windows-2022 runners; 7z is on every runner image.
+& 7z.exe x "$root\cygwin-3.6.11.tar.xz" -o"$root\now" -y | Out-Null
+& 7z.exe e "$root\now\cygwin-3.6.11.tar" -o"$root\now" -r cygwin1.dll -y | Out-Null
 Copy-Item "$root\ctx\cygwin\bin\cygwin1.dll" "$root\ctx\rt\cygwin1.dll.343"
-Copy-Item "$root\now\usr\bin\cygwin1.dll" "$root\ctx\rt\cygwin1.dll.3611"
+Copy-Item "$root\now\cygwin1.dll" "$root\ctx\rt\cygwin1.dll.3611"
 Copy-Item "$root\cyg-test.ps1" "$root\ctx\"
 (Get-Content "$root\scale.sh" -Raw) -replace "`r`n", "`n" -replace '/usr/bin:', '/bin:/usr/bin:' | Set-Content "$root\ctx\cygwin\scale.sh" -NoNewline
 (Get-Content "$root\probe-exe.sh" -Raw) -replace "`r`n", "`n" -replace 'msys-2.0.dll', 'cygwin1.dll' -replace 'msys-iconv-2.dll', 'cygiconv-2.dll' | Set-Content "$root\ctx\cygwin\probe-exe.sh" -NoNewline
@@ -46,10 +48,21 @@ docker build -t cyg-test -f "$root\ctx\Dockerfile" "$root\ctx" | Out-Null
 "host: $((Get-CimInstance Win32_OperatingSystem).Version)  Mandatory ASLR: $((Get-ProcessMitigation -System).ASLR.ForceRelocateImages)  base: $Base"
 docker info --format 'docker {{.ServerVersion}} isolation={{.Isolation}} kernel={{.KernelVersion}}'
 "stage: run containers"
-foreach ($iso in $Isolations) {
+# Detached run with a cap: the 2022 gnupg leaves gpg-agent behind, and an attached `docker run` of a Hyper-V container
+# then never returns. docker logs has the script's output either way.
+function RunContainer($image, $iso, $script, $variant, $minutes) {
+  $id = "$(docker run -d --isolation=$iso $image powershell -ExecutionPolicy Bypass -File $script -Variant $variant 2>&1 | Select-Object -Last 1)".Trim()
+  if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; return }
+  $deadline = (Get-Date).AddMinutes($minutes)
+  do { Start-Sleep 5; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
+  docker logs $id 2>&1 | ForEach-Object { "$_" }
+  if ($running -eq 'true') { "container still running after $minutes min; killing it" }
+  $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru
+  if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}foreach ($iso in $Isolations) {
   foreach ($v in '343', '343-nodyn', '3611') {
     "################ isolation=$iso runtime=$v"
-    docker run --rm --isolation=$iso cyg-test powershell -ExecutionPolicy Bypass -File C:\cyg-test.ps1 -Variant $v 2>&1
+    RunContainer 'cyg-test' $iso 'C:\cyg-test.ps1' $v 15
   }
 }
 "done"

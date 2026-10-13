@@ -13,16 +13,17 @@ jobs:
         include:
           - runner: windows-2022
             base: mcr.microsoft.com/windows/servercore:ltsc2022
-            isolations: process,hyperv
+            isolations: hyperv,process
           - runner: windows-2022
             base: mcr.microsoft.com/windows/servercore:ltsc2019
             isolations: hyperv
           - runner: windows-2025
             base: mcr.microsoft.com/windows/servercore:ltsc2025
-            isolations: process,hyperv
+            isolations: hyperv,process
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: runtime 3.3.6 / 3.4.3 / 3.4.3 bit cleared / today, pacman in a container
         shell: pwsh
+        timeout-minutes: 120
         run: ./oldrt-docker.ps1 -Base "${{ matrix.base }}" -Isolations ("${{ matrix.isolations }}" -split ',') -OldRuntimeUrl "${{ inputs.dll_url }}"

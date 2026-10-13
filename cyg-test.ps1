@@ -27,3 +27,5 @@ Run 'gpg --version, make --version, find | xargs' 'export PATH=/bin:$PATH; GPG=$
 Run 'gpg key generation (forks and pipes)' 'export PATH=/bin:$PATH HOME=/tmp; mkdir -p /tmp; GPG=$(command -v gpg2 || command -v gpg); timeout 120 $GPG --batch --pinentry-mode loopback --passphrase '''' --quick-gen-key test@example.com default default never 2>&1 | tail -2; $GPG --list-keys | grep -c pub'
 Run 'scale: 1000 subshells, 8x100 parallel, 200 timeout, 200 pipe' '/scale.sh 1000 8 100'
 "==== runtime=$Variant total fork errors: $total"
+# gpg-agent and friends outlive the script and keep the container's stdout open under Hyper-V isolation.
+Get-Process gpg-agent, dirmngr, keyboxd, scdaemon -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
