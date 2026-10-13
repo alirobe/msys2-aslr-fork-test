@@ -24,6 +24,6 @@ function Run($label, $cmd) {
 }
 Run 'uname and bases' 'export PATH=/bin:$PATH; uname -srv; bash /probe-exe.sh'
 Run 'gpg --version, make --version, find | xargs' 'export PATH=/bin:$PATH; gpg --version | head -1; make --version | head -1; find /bin -name *.exe | head -50 | xargs -n 10 echo | wc -l'
-Run 'gpg key generation (forks and pipes)' 'export PATH=/bin:$PATH HOME=/tmp; mkdir -p /tmp; timeout 120 gpg --batch --pinentry-mode loopback --passphrase "" --quick-gen-key test@example.com default default never 2>&1 | tail -2; gpg --list-keys | grep -c pub'
+Run 'gpg key generation (forks and pipes)' 'export PATH=/bin:$PATH HOME=/tmp; mkdir -p /tmp; timeout 120 gpg --batch --pinentry-mode loopback --passphrase '' --quick-gen-key test@example.com default default never 2>&1 | tail -2; gpg --list-keys | grep -c pub'
 Run 'scale: 1000 subshells, 8x100 parallel, 200 timeout, 200 pipe' '/scale.sh 1000 8 100'
 "==== runtime=$Variant total fork errors: $total"
