@@ -16,3 +16,12 @@ sed -i s/^pick/reword/ "$1"; r=$?; echo "seq editor: sed exit $r" >> /tmp/w/edit
 GIT_SEQUENCE_EDITOR=/tmp/w/seq-editor.sh GIT_EDITOR='sed -i s/^c/r/' git rebase -i HEAD~5 > ../rebase.log 2>&1 && echo "rebase with editors: $(git log --format=%s -5 | grep -c ^r)/5 reworded" || { echo "rebase with editors: failed, exit $?"; tail -8 ../rebase.log; cat /tmp/w/editor.log 2>/dev/null; git rebase --abort 2>/dev/null; }
 git config alias.hi '!echo hi' && echo "shell alias: $(git hi)"
 echo "log via pager pipe: $(git log --oneline | wc -l) lines"
+# Editor probes: which kinds of editor launch does git manage here? Trace on, abort between attempts.
+printf '#!/bin/sh\necho "marker editor ran: $1" >> /tmp/w/editor.log\n' > ../mark-editor.sh; chmod +x ../mark-editor.sh
+for ed in true /usr/bin/true /tmp/w/mark-editor.sh 'sed -i s/^pick/pick/' 'sh /tmp/w/mark-editor.sh'; do
+  rm -f /tmp/w/editor.log
+  GIT_SEQUENCE_EDITOR="$ed" GIT_EDITOR=true GIT_TRACE=1 git rebase -i HEAD~3 > ../r.log 2>&1; r=$?
+  echo "editor [$ed]: exit $r; $(cat /tmp/w/editor.log 2>/dev/null | head -1)"
+  [ $r -ne 0 ] && grep -aE "trace: run_command|trace: built-in|problem|error" ../r.log | head -4
+  git rebase --abort >/dev/null 2>&1
+done
