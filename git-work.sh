@@ -20,10 +20,12 @@ echo "log via pager pipe: $(git log --oneline | wc -l) lines"
 printf '#!/bin/sh
 echo "marker editor ran: $1" >> /tmp/w/editor.log
 ' > ../mark-editor.sh; chmod +x ../mark-editor.sh
-echo "PATH=$PATH"; for ed in /usr/bin/true /tmp/w/mark-editor.sh 'sed -i s/^pick/pick/' 'sh /tmp/w/mark-editor.sh'; do
+echo "PATH=$PATH"; for ed in /usr/bin/true /usr/bin/env /tmp/w/mark-editor.sh 'sed -i s/^pick/pick/' 'sh /tmp/w/mark-editor.sh'; do
   rm -f /tmp/w/editor.log /tmp/w/t2.log
   GIT_SEQUENCE_EDITOR="$ed" GIT_EDITOR=true GIT_TRACE2=/tmp/w/t2.log git rebase -i HEAD~3 > ../r.log 2>&1; r=$?
   echo "editor [$ed]: exit $r; $(head -1 /tmp/w/editor.log 2>/dev/null)"
-  grep -aE "child_start|child_exit" /tmp/w/t2.log | grep -av "GIT_EDITOR\|rebase--" | sed 's/^.*child_/  child_/' | head -4
+  grep -aE "child_exit" /tmp/w/t2.log | grep -av "GIT_EDITOR\|rebase--" | sed 's/^.*child_/  child_/' | head -2
+  [ "$ed" = /usr/bin/env ] && grep -aE "^(PATH|TEMP|TMP|MSYSTEM|HOME|SHELL)=" ../r.log | cut -c1-200
+  [ $r -ne 0 ] && grep -avE "^(trace|hint)" ../r.log | grep -av "^[A-Z_]*=" | head -6 | sed 's/^/  stderr: /' | cut -c1-200
   git rebase --abort >/dev/null 2>&1
 done
