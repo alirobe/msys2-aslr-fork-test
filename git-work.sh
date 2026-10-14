@@ -1,6 +1,7 @@
 # A real git workflow through the install's own bash: hooks, a clone, an interactive rebase with editors, an alias.
 export PATH=/mingw64/bin:/usr/bin:$PATH HOME=/tmp
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.com GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.com
+git config --global core.autocrlf false
 rm -rf /tmp/w && mkdir -p /tmp/w && cd /tmp/w || exit 1
 git init -q src && cd src || exit 1
 printf '#!/bin/sh\necho hook ran >> ../hooklog\n' > .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit

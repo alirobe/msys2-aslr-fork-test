@@ -26,7 +26,7 @@ function Run($v, $script, $label) {
     cmd /c "`"$root\$v\usr\bin\bash.exe`" --norc /$script > `"$root\run.log`" 2>&1"
     $code = $LASTEXITCODE
     $log = Get-Content "$root\run.log"
-    $log | Where-Object { $_ -notmatch 'dofork|fork: retry|child_copy|child_info_fork' } | Select-Object -First 12
+    $log | Where-Object { $_ -notmatch 'dofork|fork: retry|child_copy|child_info_fork' } | Select-Object -First 20
     "exit $code  fork errors: $(@($log | Where-Object { $_ -match 'dofork|child_info_fork|child_copy' }).Count)"
     $log | Where-Object { $_ -match 'child_copy|child_info_fork' } | Select-Object -First 1
 }
