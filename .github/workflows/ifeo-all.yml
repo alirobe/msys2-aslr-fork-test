@@ -1,0 +1,15 @@
+name: Mandatory + Bottom-up ASLR forced on every executable (IFEO), with a git workflow
+on: workflow_dispatch
+jobs:
+  ifeo-all:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: all / allexe, control then both settings forced on every executable
+        shell: pwsh
+        timeout-minutes: 60
+        run: ./ifeo-all.ps1
