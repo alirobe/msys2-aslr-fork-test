@@ -73,13 +73,27 @@ foreach ($iso in $Isolations) {
     $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } default { $null } }
     if (-not $pkg) { continue }
     "################ isolation=$iso runtime=$v mode=upgraded-in-build"
+    # Each MSYS command in its own shell, as dscho's reproducer does: a shell that has just replaced its own runtime
+    # cannot spawn programs on the new one.
+    @"
+`$ErrorActionPreference = 'Stop'
+`$env:MSYSTEM = 'MSYS'
+`$env:PATH = 'C:\msys64\usr\bin;C:\Windows\System32;C:\Windows'
+function msys([string]`$cmd) { C:\msys64\usr\bin\bash.exe -lc `$cmd; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }
+msys 'uname -srv'
+msys 'pacman --config /etc/pacman-ci.conf --noconfirm -Udd /c/rt/$pkg'
+"after upgrade: " + (Get-FileHash C:\msys64\usr\bin\msys-2.0.dll).Hash.ToLower().Substring(0, 12)
+Get-Process gpg-agent, dirmngr, keyboxd, scdaemon -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+exit 0
+"@ | Set-Content "$root\ctx\build-step.ps1"
     @"
 FROM oldrt-base
-RUN ["C:\\msys64\\usr\\bin\\bash.exe", "-lc", "uname -srv && pacman --config /etc/pacman-ci.conf --noconfirm -Udd /c/rt/$pkg && uname -srv"]
+COPY build-step.ps1 C:/build-step.ps1
+RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-File", "C:\\build-step.ps1"]
 "@ | Set-Content "$root\ctx\Dockerfile.inplace"
     $bout = @(docker build --no-cache --isolation=$iso -t "oldrt-inplace-$v" -f "$root\ctx\Dockerfile.inplace" "$root\ctx" 2>&1 | ForEach-Object { "$_" })
     if (-not ($bout -match 'Successfully built')) { "docker build failed; last lines:"; $bout | Select-Object -Last 30 | ForEach-Object { "  $_" }; continue }
-    $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|Successfully built' }
+    $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|after upgrade|Successfully built' }
     RunContainer "oldrt-inplace-$v" $iso "inplace" $Minutes
   }
 }
