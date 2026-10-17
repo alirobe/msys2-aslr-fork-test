@@ -25,7 +25,7 @@ $flagged = "$root\flagged.dll"; $plain = "$root\c26\msys64\usr\bin\msys-2.0.dll"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler3.exe" "$root\sampler3.cs"
 (Get-Content "$root\probe-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\probe-entry.sh" -NoNewline
 Copy-Item "$root\probe-ps.ps1" "$root\c26\msys64\"
-(Get-Content "$root\scale.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\scale.sh" -NoNewline
+foreach ($sh in 'scale.sh', 'later.sh', 'exit7.sh') { (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\$sh" -NoNewline }
 # Lower layer: the tree, L* (flagged, only here) and B* (unflagged here, flagged copies on top).
 $s = "$root\c26\samp"; New-Item -ItemType Directory "$s\lower", "$s\both" -Force | Out-Null
 Copy-Item "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd" $s
@@ -87,19 +87,10 @@ if ($Round -eq 10) {
   "reexec sha256 $((Get-FileHash "$t\reexec.dll").Hash.ToLower().Substring(0, 12))  patched $((Get-FileHash "$t\patched.dll").Hash.ToLower().Substring(0, 12))  shipped $((Get-FileHash "$t\msys-2.0.dll").Hash.ToLower().Substring(0, 12))"
   $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
   Probe rc3-reexec 're-exec runtime, bash as entry: two forks, then the scale test' "$bash -c `"$scale`""
-  $later = 'uname -srv; read -r w < /proc/$$/winpid; echo winpid $w; cmd //c "copy /b C:\msys64\usr\bin\msys-2.0.dll nul" > /dev/null; echo read by another process done; /probe-entry.sh afterread 0; /scale.sh 100 2 25; echo scale rc $?'
   foreach ($img in 'rc3-reexec', 'rc3-patched', 'rc3-top') {
-    Probe $img "later read: bash starts, a native process reads the DLL, bash forks ($img)" "$bash -c `"$later`""
+    Probe $img "later read: bash starts, a native process reads the DLL, bash forks ($img)" "$bash /later.sh"
   }
-  "################ exit code through the re-exec (expect 7)"
-  $id = "$(docker run -d --isolation=hyperv --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' rc3-reexec $bash -c 'echo before exit; exit 7' 2>&1 | Select-Object -Last 1)".Trim()
-  if ($id -match '^[0-9a-f]{12,}$') {
-    $deadline = (Get-Date).AddMinutes(3)
-    do { Start-Sleep 3; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
-    docker logs $id 2>&1 | ForEach-Object { "$_" }
-    "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
-    $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
-  } else { "docker run failed: $id" }
+  Probe rc3-reexec 'exit code through the re-exec (expect 7)' "$bash /exit7.sh"
   "done"; return
 }
 if ($Round -eq 9) {
