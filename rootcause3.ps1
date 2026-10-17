@@ -4,7 +4,8 @@
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
       [int]$Round = 3,
-      [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll")
+      [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll",
+      [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec-3.6.11/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -72,6 +73,34 @@ function Probe($image, $label, [string]$entry) {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 10) {
+  # The re-exec runtime (root process re-execs once when its DLL is mapped from the layer) vs the attribute-only patch
+  # vs shipped: bash as entry, then the later-read case (bash starts, a native process reads the DLL, bash forks), then
+  # exit-code propagation through the re-exec.
+  foreach ($pair in @(@('reexec', $ReexecDllUrl), @('patched', $PatchedDllUrl))) {
+    Invoke-WebRequest -Uri $pair[1] -OutFile "$t\$($pair[0]).dll"
+    "FROM rc3-base`nCOPY $($pair[0]).dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$($pair[0])"
+    docker build -t "rc3-$($pair[0])" -f "$t\Dockerfile.$($pair[0])" $t | Select-Object -Last 1
+  }
+  & "$root\pe-flags.ps1" -Paths "$t\reexec.dll", "$t\patched.dll", "$t\msys-2.0.dll"
+  "reexec sha256 $((Get-FileHash "$t\reexec.dll").Hash.ToLower().Substring(0, 12))  patched $((Get-FileHash "$t\patched.dll").Hash.ToLower().Substring(0, 12))  shipped $((Get-FileHash "$t\msys-2.0.dll").Hash.ToLower().Substring(0, 12))"
+  $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
+  Probe rc3-reexec 're-exec runtime, bash as entry: two forks, then the scale test' "$bash -c `"$scale`""
+  $later = 'uname -srv; read -r w < /proc/$$/winpid; echo winpid $w; cmd //c "copy /b C:\msys64\usr\bin\msys-2.0.dll nul" > /dev/null; echo read by another process done; /probe-entry.sh afterread 0; /scale.sh 100 2 25; echo scale rc $?'
+  foreach ($img in 'rc3-reexec', 'rc3-patched', 'rc3-top') {
+    Probe $img "later read: bash starts, a native process reads the DLL, bash forks ($img)" "$bash -c `"$later`""
+  }
+  "################ exit code through the re-exec (expect 7)"
+  $id = "$(docker run -d --isolation=hyperv --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' rc3-reexec $bash -c 'echo before exit; exit 7' 2>&1 | Select-Object -Last 1)".Trim()
+  if ($id -match '^[0-9a-f]{12,}$') {
+    $deadline = (Get-Date).AddMinutes(3)
+    do { Start-Sleep 3; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
+    docker logs $id 2>&1 | ForEach-Object { "$_" }
+    "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
+    $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+  } else { "docker run failed: $id" }
+  "done"; return
 }
 if ($Round -eq 9) {
   # The patched runtime (installation root found with an attribute-only open) over the same tree, bash as entry.
