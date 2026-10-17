@@ -11,6 +11,9 @@ on:
       skip_copied_in:
         description: Skip the copied-in containers (already answered) and run only the in-place upgrades
         default: 'false'
+      mirror_only:
+        description: Run only the mirror of dscho's reproducer (tar-extracted tree, bash as entry process)
+        default: 'false'
 jobs:
   oldrt2019:
     runs-on: windows-2022
@@ -19,4 +22,4 @@ jobs:
       - name: genuine 2022 / bit cleared / rebuilt 3.4.3 / 3.3.6 / today, copied in and upgraded in place
         shell: pwsh
         timeout-minutes: 150
-        run: ./oldrt2019-docker.ps1 -Base "${{ inputs.base }}" -Isolations ("${{ inputs.isolations }}" -split ',') -SkipCopiedIn:("${{ inputs.skip_copied_in }}" -eq 'true')
+        run: ./oldrt2019-docker.ps1 -Base "${{ inputs.base }}" -Isolations ("${{ inputs.isolations }}" -split ',') -SkipCopiedIn:("${{ inputs.skip_copied_in }}" -eq 'true') -MirrorOnly:("${{ inputs.mirror_only }}" -eq 'true')

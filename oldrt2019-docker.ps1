@@ -12,7 +12,7 @@ param([string]$Base = "mcr.microsoft.com/windows/servercore:10.0.17763.3770", [s
       [string]$RebuiltDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/rebuilt-3.4.3-dec2022/msys-2.0.dll",
       [string]$GenuinePkgUrl = "https://github.com/msys2/msys2-archive/releases/download/2022-12-16-msys-x86_64/msys2-runtime-3.4-3.4.2-1-x86_64.pkg.tar.zst",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst",
-      [string[]]$Variants = @('342', '342-nodyn', '343', '336', 'now'), [int]$Minutes = 15, [switch]$SkipCopiedIn)
+      [string[]]$Variants = @('342', '342-nodyn', '343', '336', 'now'), [int]$Minutes = 15, [switch]$SkipCopiedIn, [switch]$MirrorOnly)
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -64,14 +64,14 @@ function RunContainer($image, $iso, $variant, $minutes) {
   if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
 }
 foreach ($iso in $Isolations) {
-  if (-not $SkipCopiedIn) { foreach ($v in $Variants) {
+  if (-not $SkipCopiedIn -and -not $MirrorOnly) { foreach ($v in $Variants) {
     "################ isolation=$iso runtime=$v mode=copied-in"
     RunContainer 'oldrt-base' $iso $v $Minutes
   } }
   # In-place upgrade inside docker build, as the 2022 image was made: pacman -U of the runtime package in a RUN layer.
   foreach ($v in $Variants) {
     $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } default { $null } }
-    if (-not $pkg) { continue }
+    if (-not $pkg -or $MirrorOnly) { continue }
     "################ isolation=$iso runtime=$v mode=upgraded-in-build"
     # Each MSYS command in its own shell, as dscho's reproducer does: a shell that has just replaced its own runtime
     # cannot spawn programs on the new one.
@@ -95,6 +95,48 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
     if (-not ($bout -match 'Successfully built')) { "docker build failed; last lines:"; $bout | Select-Object -Last 30 | ForEach-Object { "  $_" }; continue }
     $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|after upgrade|Successfully built' }
     RunContainer "oldrt-inplace-$v" $iso "inplace" $Minutes
+  }
+  # Mirror of dscho's reproducer: tree extracted by tar inside the build step, runtime upgraded in a fresh shell,
+  # another fresh shell afterwards, then docker run with bash -lc as the container's entry process.
+  if (-not (Test-Path "$root\ctx\sdk-base.tar")) { & "$env:SystemRoot\System32\tar.exe" -cf "$root\ctx\sdk-base.tar" -C "$root\ctx" msys64 }
+  foreach ($v in $Variants) {
+    $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } default { $null } }
+    if (-not $pkg) { continue }
+    "################ isolation=$iso runtime=$v mode=mirror (tar-extracted tree, bash as entry process)"
+    @"
+`$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Path C:\msys64 -Force > `$null
+C:\Windows\System32\tar.exe -xf C:\packages\sdk-base.tar -C C:\
+if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }
+`$env:MSYSTEM = 'MSYS'
+`$env:PATH = 'C:\msys64\usr\bin;C:\Windows\System32;C:\Windows'
+function msys([string]`$cmd) { C:\msys64\usr\bin\bash.exe -lc `$cmd; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE } }
+msys 'uname -a'
+msys 'pacman --config /etc/pacman-ci.conf --noconfirm -Udd /c/packages/$pkg'
+"after upgrade: " + (Get-FileHash C:\msys64\usr\bin\msys-2.0.dll).Hash.ToLower().Substring(0, 12)
+msys 'uname -a && pacman -Qk > /dev/null; echo "Qk exit `$?"'
+Get-Process gpg-agent, dirmngr, keyboxd, scdaemon -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath 'C:\`$Recycle.Bin' -Recurse -Force -ErrorAction SilentlyContinue
+exit 0
+"@ | Set-Content "$root\ctx\build-step-mirror.ps1"
+    @"
+FROM $Base
+COPY sdk-base.tar rt/$pkg build-step-mirror.ps1 C:/packages/
+COPY msys64/scale.sh C:/packages/scale.sh
+RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-File", "C:\\packages\\build-step-mirror.ps1"]
+"@ | Set-Content "$root\ctx\Dockerfile.mirror"
+    $bout = @(docker build --no-cache --isolation=$iso -t "oldrt-mirror-$v" -f "$root\ctx\Dockerfile.mirror" "$root\ctx" 2>&1 | ForEach-Object { "$_" })
+    if (-not ($bout -match 'Successfully built')) { "docker build failed; last lines:"; $bout | Select-Object -Last 30 | ForEach-Object { "  $_" }; continue }
+    $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|after upgrade|Qk exit|Successfully built' }
+    $cmd = 'uname -a && for i in 1 2 3 4 5; do x=$(echo $i) && echo "fork $i ok"; done; cp /c/packages/scale.sh /scale.sh && /scale.sh 300 4 50; pacman -Qk > /dev/null; echo "Qk exit $?"'
+    $id = "$(docker run -d --isolation=$iso --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' "oldrt-mirror-$v" C:\msys64\usr\bin\bash.exe -lc $cmd 2>&1 | Select-Object -Last 1)".Trim()
+    if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; continue }
+    $deadline = (Get-Date).AddMinutes($Minutes)
+    do { Start-Sleep 5; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
+    $out = @(docker logs $id 2>&1 | ForEach-Object { "$_" })
+    $out | Where-Object { $_ -notmatch 'fork: retry' } | Select-Object -First 40
+    "fork errors: $(@($out | Where-Object { $_ -match 'dofork|child_copy|child_info_fork' }).Count)  exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
+    $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
   }
 }
 "done"
