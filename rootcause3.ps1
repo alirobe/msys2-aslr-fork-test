@@ -3,7 +3,8 @@
 # container's boot timeline and filter state; then bash started late, bash after a read, and a single-layer image.
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
-      [int]$Round = 3)
+      [int]$Round = 3,
+      [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -23,6 +24,7 @@ $flagged = "$root\flagged.dll"; $plain = "$root\c26\msys64\usr\bin\msys-2.0.dll"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler3.exe" "$root\sampler3.cs"
 (Get-Content "$root\probe-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\probe-entry.sh" -NoNewline
 Copy-Item "$root\probe-ps.ps1" "$root\c26\msys64\"
+(Get-Content "$root\scale.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\scale.sh" -NoNewline
 # Lower layer: the tree, L* (flagged, only here) and B* (unflagged here, flagged copies on top).
 $s = "$root\c26\samp"; New-Item -ItemType Directory "$s\lower", "$s\both" -Force | Out-Null
 Copy-Item "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd" $s
@@ -69,6 +71,18 @@ function Probe($image, $label, [string]$entry) {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 9) {
+  # The patched runtime (installation root found with an attribute-only open) over the same tree, bash as entry.
+  Invoke-WebRequest -Uri $PatchedDllUrl -OutFile "$t\patched.dll"
+  & "$root\pe-flags.ps1" -Paths "$t\patched.dll", "$t\msys-2.0.dll"
+  "patched sha256 $((Get-FileHash "$t\patched.dll").Hash.ToLower().Substring(0, 12))  shipped 3.6.11-3 sha256 $((Get-FileHash "$t\msys-2.0.dll").Hash.ToLower().Substring(0, 12))"
+  "FROM rc3-base`nCOPY patched.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.patched"
+  docker build -t rc3-patched -f "$t\Dockerfile.patched" $t | Select-Object -Last 1
+  $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
+  Probe rc3-patched 'patched runtime, bash as entry: two forks, then 300 subshells, 4x50 parallel, timeouts and pipes' "$bash -c `"$scale`""
+  Probe rc3-top 'shipped 3.6.11-3, same command, for comparison' "$bash -c `"$scale`""
+  "done"; return
 }
 if ($Round -eq 8) {
   Probe rc3-top 'access rights in a read open, one at a time; full load of a plain DLL as control' "cmd /c C:\samp\s8-bits.cmd"

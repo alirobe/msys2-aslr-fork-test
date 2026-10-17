@@ -6,7 +6,7 @@ on:
         description: Container image
         default: mcr.microsoft.com/windows/servercore:ltsc2019
       round:
-        description: 3 (sampler, late, read first, single layer), 4 (access kinds, sharing, strace), 5 (file trace, SysMain stopped), 6 (loader test with a plain exe), 7 (handle operations, kernel file traces) or 8 (access rights one at a time, plain DLL control)
+        description: 3 (sampler, late, read first, single layer), 4 (access kinds, sharing, strace), 5 (file trace, SysMain stopped), 6 (loader test with a plain exe), 7 (handle operations, kernel file traces), 8 (access rights one at a time, plain DLL control) or 9 (patched runtime, bash as entry)
         default: '3'
 jobs:
   rootcause3:
