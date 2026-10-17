@@ -1,0 +1,19 @@
+name: December 2022 reproduction, Server 2019 at its December 2022 patch level under Hyper-V
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Container image
+        default: mcr.microsoft.com/windows/servercore:10.0.17763.3770
+      isolations:
+        description: Comma-separated isolation modes
+        default: hyperv
+jobs:
+  oldrt2019:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: genuine 2022 / bit cleared / rebuilt 3.4.3 / 3.3.6 / today, copied in and upgraded in place
+        shell: pwsh
+        timeout-minutes: 150
+        run: ./oldrt2019-docker.ps1 -Base "${{ inputs.base }}" -Isolations ("${{ inputs.isolations }}" -split ',')
