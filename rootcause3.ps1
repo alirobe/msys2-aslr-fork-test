@@ -2,7 +2,8 @@
 # a file an image map gets over the container's first seconds, by layer placement and with a read first, plus the
 # container's boot timeline and filter state; then bash started late, bash after a read, and a single-layer image.
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
-      [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16)
+      [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
+      [int]$Round = 3)
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -17,11 +18,12 @@ $tu = & "$root\c26\msys64\usr\bin\cygpath.exe" -u $root
 $flagged = "$root\flagged.dll"; $plain = "$root\c26\msys64\usr\bin\msys-2.0.dll"
 "stage: layout"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler.exe" "$root\sampler.cs"
+& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler2.exe" "$root\sampler2.cs"
 (Get-Content "$root\probe-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\probe-entry.sh" -NoNewline
 Copy-Item "$root\probe-ps.ps1" "$root\c26\msys64\"
 # Lower layer: the tree, L* (flagged, only here) and B* (unflagged here, flagged copies on top).
 $s = "$root\c26\samp"; New-Item -ItemType Directory "$s\lower", "$s\both" -Force | Out-Null
-Copy-Item "$root\sampler.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd" $s
+Copy-Item "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd" $s
 # Top layer: the flagged runtime over the tree's own, T* and R* (only here) and the flagged B*.
 $t = "$root\top"; New-Item -ItemType Directory "$t\samp\top", "$t\samp\both" -Force | Out-Null
 Copy-Item $flagged "$t\msys-2.0.dll"
@@ -65,6 +67,12 @@ function Probe($image, $label, [string]$entry) {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 4) {
+  Probe rc3-top 'access: attribute open, open, one-byte read, before the first map' "cmd /c C:\samp\s1-access.cmd"
+  Probe rc3-top 'sharing: a held map, then a touch, then a new process maps' "cmd /c C:\samp\s2-share.cmd"
+  Probe rc3-top 'strace of bash forking once, as entry' "cmd /c C:\samp\s3-strace.cmd"
+  "done"; return
 }
 Probe rc3-top 'sampler: a fresh image map per placement every 2 s from container start, then timeline' "cmd /c C:\samp\sampler.cmd"
 Probe rc3-top 'control: bash as entry' "$bash /probe-entry.sh entry 30"

@@ -5,6 +5,9 @@ on:
       base:
         description: Container image
         default: mcr.microsoft.com/windows/servercore:ltsc2019
+      round:
+        description: 3 (sampler, late, read first, single layer) or 4 (access kinds, sharing, strace)
+        default: '3'
 jobs:
   rootcause3:
     runs-on: windows-2022
@@ -13,4 +16,4 @@ jobs:
       - name: sampler, timeline, late start, read first, single layer
         shell: pwsh
         timeout-minutes: 120
-        run: ./rootcause3.ps1 -Base "${{ inputs.base }}"
+        run: ./rootcause3.ps1 -Base "${{ inputs.base }}" -Round ${{ inputs.round }}
