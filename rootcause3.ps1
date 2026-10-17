@@ -3,7 +3,7 @@
 # container's boot timeline and filter state; then bash started late, bash after a read, and a single-layer image.
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
-      [int]$Round = 3,
+      [int]$Round = 3, [string]$Isolation = 'hyperv',
       [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll",
       [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec-3.6.11/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
@@ -42,11 +42,11 @@ foreach ($k in 1..$N) {
 "FROM rc3-base`nCOPY msys-2.0.dll C:/msys64/usr/bin/msys-2.0.dll`nCOPY samp C:/samp`nRUN mkdir C:\samp\plain && copy C:\Windows\System32\version.dll C:\samp\plain\P01.dll" | Set-Content "$t\Dockerfile.top"
 docker build -t rc3-base -f "$root\c26\Dockerfile.base" "$root\c26" | Select-Object -Last 1
 # The RUN step needs Hyper-V isolation: the 2019 image cannot run process-isolated on the 2022 host.
-docker build --isolation=hyperv -t rc3-top -f "$t\Dockerfile.top" $t 2>&1 | Select-Object -Last 3
+docker build --isolation=$Isolation -t rc3-top -f "$t\Dockerfile.top" $t 2>&1 | Select-Object -Last 3
 # Single layer: the flagged runtime already in the tree when it is copied in, so no copy of it sits underneath.
 Copy-Item $flagged $plain -Force
 docker build -t rc3-single -f "$root\c26\Dockerfile.base" "$root\c26" | Select-Object -Last 1
-"host: $((Get-CimInstance Win32_OperatingSystem).Version)  base: $Base"
+"host: $((Get-CimInstance Win32_OperatingSystem).Version)  base: $Base  isolation: $Isolation"
 function Cap([string]$a, [int]$sec) {
   $o = "$root\cap.out"; $e = "$root\cap.err"
   $p = Start-Process docker -ArgumentList $a -NoNewWindow -PassThru -RedirectStandardOutput $o -RedirectStandardError $e
@@ -57,7 +57,7 @@ $bash = 'C:\msys64\usr\bin\bash.exe --norc --noprofile'
 $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 function Probe($image, $label, [string]$entry) {
   "################ $label  (${image}: $entry)"
-  $id = "$(Invoke-Expression "docker run -d --isolation=hyperv --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
+  $id = "$(Invoke-Expression "docker run -d --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
   if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; return }
   $deadline = (Get-Date).AddMinutes(6)
   do { Start-Sleep 3; $log = docker logs $id 2>&1 | Out-String; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($log -notmatch 'WAITING' -and $running -eq 'true' -and (Get-Date) -lt $deadline)
@@ -73,6 +73,19 @@ function Probe($image, $label, [string]$entry) {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 12) {
+  # The three runtimes as the container's entry bash under the chosen isolation, plus the map-source sampler.
+  foreach ($pair in @(@('reexec', $ReexecDllUrl), @('patched', $PatchedDllUrl))) {
+    Invoke-WebRequest -Uri $pair[1] -OutFile "$t\$($pair[0]).dll"
+    "FROM rc3-base`nCOPY $($pair[0]).dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$($pair[0])"
+    docker build -t "rc3-$($pair[0])" -f "$t\Dockerfile.$($pair[0])" $t | Select-Object -Last 1
+  }
+  $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
+  foreach ($img in 'rc3-top', 'rc3-patched', 'rc3-reexec') { Probe $img "entry bash ($img)" "$bash -c `"$scale`"" }
+  Probe rc3-top 'later read on the shipped runtime' "$bash /later.sh"
+  Probe rc3-top 'sampler: map source per placement every 2 s, then timeline' "cmd /c C:\samp\sampler.cmd"
+  "done"; return
 }
 if ($Round -eq 10) {
   # The re-exec runtime (root process re-execs once when its DLL is mapped from the layer) vs the attribute-only patch
