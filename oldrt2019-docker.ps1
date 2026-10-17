@@ -12,7 +12,7 @@ param([string]$Base = "mcr.microsoft.com/windows/servercore:10.0.17763.3770", [s
       [string]$RebuiltDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/rebuilt-3.4.3-dec2022/msys-2.0.dll",
       [string]$GenuinePkgUrl = "https://github.com/msys2/msys2-archive/releases/download/2022-12-16-msys-x86_64/msys2-runtime-3.4-3.4.2-1-x86_64.pkg.tar.zst",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst",
-      [string[]]$Variants = @('342', '342-nodyn', '343', '336', 'now'), [int]$Minutes = 15)
+      [string[]]$Variants = @('342', '342-nodyn', '343', '336', 'now'), [int]$Minutes = 15, [switch]$SkipCopiedIn)
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -31,6 +31,9 @@ Invoke-WebRequest -Uri $TodayPkgUrl -OutFile "$root\ctx\rt\today.pkg.tar.zst"
 $bash26 = "$root\now\msys64\usr\bin\bash.exe"; $cyg = "$root\now\msys64\usr\bin\cygpath.exe"
 $rtu = & $cyg -u "$root\ctx\rt"
 & $bash26 -lc "cd '$rtu' && mkdir -p g t && tar -xf genuine.pkg.tar.zst -C g usr/bin/msys-2.0.dll && cp g/usr/bin/msys-2.0.dll msys-2.0.dll.342 && tar -xf today.pkg.tar.zst -C t usr/bin/msys-2.0.dll && cp t/usr/bin/msys-2.0.dll msys-2.0.dll.now && rm -rf g t"
+# The archived package is named msys2-runtime-3.4 and conflicts with the installed msys2-runtime; repack it under the
+# installed name, as dscho's reproducer does, so pacman -U treats it as an upgrade.
+& $bash26 -lc "cd '$rtu' && rm -rf rp && mkdir rp && tar -xf genuine.pkg.tar.zst -C rp && sed -i -e 's/^pkgname = msys2-runtime-3.4$/pkgname = msys2-runtime/' -e 's/^pkgbase = msys2-runtime-3.4$/pkgbase = msys2-runtime/' -e '/^conflict = msys2-runtime$/d' -e '/^provides = msys2-runtime=/d' rp/.PKGINFO && grep -E '^(pkgname|pkgbase|conflict|provides)' rp/.PKGINFO && cd rp && tar --zstd -cf ../genuine.pkg.tar.zst .BUILDINFO .MTREE .PKGINFO usr && cd .. && rm -rf rp && ls -la genuine.pkg.tar.zst"
 Copy-Item "$root\ctx\msys64\usr\bin\msys-2.0.dll" "$root\ctx\rt\msys-2.0.dll.336"
 Copy-Item "$root\oldrt2019-test.ps1" "$root\ctx\"
 (Get-Content "$root\scale.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\ctx\msys64\scale.sh" -NoNewline
@@ -61,10 +64,10 @@ function RunContainer($image, $iso, $variant, $minutes) {
   if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
 }
 foreach ($iso in $Isolations) {
-  foreach ($v in $Variants) {
+  if (-not $SkipCopiedIn) { foreach ($v in $Variants) {
     "################ isolation=$iso runtime=$v mode=copied-in"
     RunContainer 'oldrt-base' $iso $v $Minutes
-  }
+  } }
   # In-place upgrade inside docker build, as the 2022 image was made: pacman -U of the runtime package in a RUN layer.
   foreach ($v in $Variants) {
     $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } default { $null } }
@@ -74,7 +77,9 @@ foreach ($iso in $Isolations) {
 FROM oldrt-base
 RUN ["C:\\msys64\\usr\\bin\\bash.exe", "-lc", "uname -srv && pacman --config /etc/pacman-ci.conf --noconfirm -Udd /c/rt/$pkg && uname -srv"]
 "@ | Set-Content "$root\ctx\Dockerfile.inplace"
-    docker build --no-cache --isolation=$iso -t "oldrt-inplace-$v" -f "$root\ctx\Dockerfile.inplace" "$root\ctx" 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|Successfully built' }
+    $bout = @(docker build --no-cache --isolation=$iso -t "oldrt-inplace-$v" -f "$root\ctx\Dockerfile.inplace" "$root\ctx" 2>&1 | ForEach-Object { "$_" })
+    if (-not ($bout -match 'Successfully built')) { "docker build failed; last lines:"; $bout | Select-Object -Last 30 | ForEach-Object { "  $_" }; continue }
+    $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|Successfully built' }
     RunContainer "oldrt-inplace-$v" $iso "inplace" $Minutes
   }
 }
