@@ -20,7 +20,8 @@ $tu = & "$root\c26\msys64\usr\bin\cygpath.exe" -u $root
 & $bash26 -lc "cd '$tu' && mkdir -p t && tar -xf today.pkg.tar.zst -C t usr/bin/msys-2.0.dll && cp t/usr/bin/msys-2.0.dll c26/msys-2.0.dll.now && cp t/usr/bin/msys-2.0.dll c22/msys-2.0.dll.now && rm -rf t"
 foreach ($c in 'c22', 'c26') {
   (Get-Content "$root\probe-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\$c\msys64\probe-entry.sh" -NoNewline
-  Copy-Item "$root\probe-ps.ps1" "$root\$c\msys64\probe-ps.ps1"
+  Copy-Item "$root\probe-ps.ps1", "$root\ps-entry.ps1", "$root\delay-entry.cmd" "$root\$c\msys64\"
+  (Get-Content "$root\exec-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\$c\msys64\exec-entry.sh" -NoNewline
 }
 function PeInfo($p) {
   $b = [IO.File]::ReadAllBytes($p); $pe = [BitConverter]::ToInt32($b, 0x3c); $n = [BitConverter]::ToUInt16($b, $pe + 6)
@@ -37,7 +38,6 @@ PeInfo "$root\c22\msys64\usr\bin\msys-2.0.dll"
 "FROM $Base`nCOPY msys64 C:/msys64`nCOPY msys-2.0.dll.now C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$root\c22\Dockerfile.flag"
 docker build -t rc-noflag26 -f "$root\c26\Dockerfile.noflag" "$root\c26" | Select-Object -Last 1
 docker build -t rc-flag26 -f "$root\c26\Dockerfile.flag" "$root\c26" | Select-Object -Last 1
-docker build -t rc-flag22 -f "$root\c22\Dockerfile.flag" "$root\c22" | Select-Object -Last 1
 "host: $((Get-CimInstance Win32_OperatingSystem).Version)  base: $Base"
 # docker exec under Hyper-V isolation can hang; run each with a cap and capture through files.
 function Cap([string]$a, [int]$sec) {
@@ -47,6 +47,7 @@ function Cap([string]$a, [int]$sec) {
   Get-Content $o, $e -ErrorAction SilentlyContinue
 }
 $bash = 'C:\msys64\usr\bin\bash.exe --norc --noprofile'
+$ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
 function Probe($image, $label, [string]$entry) {
   "################ $label  (${image}: $entry)"
   $id = "$(Invoke-Expression "docker run -d --isolation=hyperv --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
@@ -55,7 +56,7 @@ function Probe($image, $label, [string]$entry) {
   do { Start-Sleep 3; $log = docker logs $id 2>&1 | Out-String; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($log -notmatch 'WAITING' -and $running -eq 'true' -and (Get-Date) -lt $deadline)
   if ($log -match 'WAITING') {
     "--- docker exec powershell: process tree, runtime bases, ASLR policy"
-    Cap "exec $id powershell -NoProfile -ExecutionPolicy Bypass -File C:\msys64\probe-ps.ps1" 60
+    Cap "exec $id $ps -NoProfile -ExecutionPolicy Bypass -File C:\msys64\probe-ps.ps1" 60
     "--- docker exec bash: a second root bash in the same container"
     Cap "exec $id $bash /probe-entry.sh exec-side 0" 90
   } else { "entry never reached WAITING" }
@@ -67,9 +68,7 @@ function Probe($image, $label, [string]$entry) {
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
 }
 Probe rc-flag26 'flagged runtime, bash as entry' "$bash /probe-entry.sh entry $Wait"
-Probe rc-flag26 'flagged runtime, powershell entry' "powershell -NoProfile -Command `"& C:\msys64\usr\bin\bash.exe --norc --noprofile /probe-entry.sh ps $Wait`""
-Probe rc-flag26 'flagged runtime, cmd entry' "cmd /c $bash /probe-entry.sh cmd $Wait"
-Probe rc-flag26 'flagged runtime, bash entry that execs bash' "$bash -c `"exec /usr/bin/bash --norc --noprofile /probe-entry.sh exec $Wait`""
-Probe rc-noflag26 'unflagged runtime (2026 base as shipped), bash as entry' "$bash /probe-entry.sh noflag $Wait"
-Probe rc-flag22 'flagged runtime in the 2022 tree, bash as entry' "$bash /probe-entry.sh tree22 $Wait"
+Probe rc-flag26 'flagged runtime, powershell entry' "$ps -NoProfile -ExecutionPolicy Bypass -File C:\msys64\ps-entry.ps1"
+Probe rc-flag26 'flagged runtime, bash entry that execs bash' "$bash /exec-entry.sh"
+Probe rc-flag26 'flagged runtime, cmd entry starting bash at 0 s, 20 s and 60 s' "cmd /c C:\msys64\delay-entry.cmd"
 "done"
