@@ -26,6 +26,8 @@ class Sampler3
     [DllImport("ntdll")] static extern int NtQueryInformationFile(IntPtr h, out IO_STATUS_BLOCK io, IntPtr buf, uint len, int cls);
     [DllImport("ntdll")] static extern int NtQueryVolumeInformationFile(IntPtr h, out IO_STATUS_BLOCK io, IntPtr buf, uint len, int cls);
     [DllImport("ntdll")] static extern int NtClose(IntPtr h);
+    [DllImport("ntdll")] static extern int NtQuerySecurityObject(IntPtr h, uint info, IntPtr sd, uint len, out uint need);
+    [DllImport("ntdll")] static extern int NtQueryEaFile(IntPtr h, out IO_STATUS_BLOCK io, IntPtr buf, uint len, bool single, IntPtr list, uint listLen, IntPtr index, bool restart);
 
     [StructLayout(LayoutKind.Sequential)] struct UNICODE_STRING { public ushort Length, MaximumLength; public IntPtr Buffer; }
     [StructLayout(LayoutKind.Sequential)] struct OBJECT_ATTRIBUTES { public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes; public IntPtr Sd, Sqos; }
@@ -87,6 +89,9 @@ class Sampler3
                     IntPtr vol = Open(nt.Substring(0, 6), IntPtr.Zero, READ_ATTR_SYNC, 0, out st); // "\??\C:"
                     IntPtr fh = OpenById(vol, id, out st); Console.WriteLine("t={0:F1} {1} by-id open {2:X}", Up(), tag, st); if (fh != IntPtr.Zero) NtClose(fh); NtClose(vol); break;
                 }
+            case "acc": { uint acc = Convert.ToUInt32(a[2], 16); h = Open(nt, IntPtr.Zero, acc | 0x100000, OPTS, out st); Console.WriteLine("t={0:F1} {1} access {2:X} open {3:X}", Up(), tag, acc, st); if (h != IntPtr.Zero) NtClose(h); break; }
+            case "sd": { h = Open(nt, IntPtr.Zero, 0x20000 | 0x100000, OPTS, out st); IntPtr buf = Marshal.AllocHGlobal(4096); uint need; int s = NtQuerySecurityObject(h, 0x7, buf, 4096, out need); Console.WriteLine("t={0:F1} {1} open {2:X} sd {3:X}", Up(), tag, st, s); NtClose(h); break; }
+            case "ea": { h = Open(nt, IntPtr.Zero, 0x8 | 0x100000, OPTS, out st); IntPtr buf = Marshal.AllocHGlobal(4096); IO_STATUS_BLOCK io; int s = NtQueryEaFile(h, out io, buf, 4096, true, IntPtr.Zero, 0, IntPtr.Zero, true); Console.WriteLine("t={0:F1} {1} open {2:X} ea {3:X}", Up(), tag, st, s); NtClose(h); break; }
             case "attrs": Console.WriteLine("t={0:F1} {1} attrs {2:X}", Up(), tag, GetFileAttributesW(path)); break;
             case "find": { IntPtr d = Marshal.AllocHGlobal(1024); IntPtr fh = FindFirstFileW(path, d); Console.WriteLine("t={0:F1} {1} find {2}", Up(), tag, fh != new IntPtr(-1)); FindClose(fh); break; }
             case "loadlib":
