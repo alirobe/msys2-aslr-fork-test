@@ -123,6 +123,7 @@ exit 0
 FROM $Base
 COPY sdk-base.tar rt/$pkg build-step-mirror.ps1 C:/packages/
 COPY msys64/scale.sh C:/packages/scale.sh
+COPY oldrt2019-test.ps1 C:/oldrt2019-test.ps1
 RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-File", "C:\\packages\\build-step-mirror.ps1"]
 "@ | Set-Content "$root\ctx\Dockerfile.mirror"
     $bout = @(docker build --no-cache --isolation=$iso -t "oldrt-mirror-$v" -f "$root\ctx\Dockerfile.mirror" "$root\ctx" 2>&1 | ForEach-Object { "$_" })
@@ -137,6 +138,22 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
     $out | Where-Object { $_ -notmatch 'fork: retry' } | Select-Object -First 40
     "fork errors: $(@($out | Where-Object { $_ -match 'dofork|child_copy|child_info_fork' }).Count)  exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
     $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+    # Isolate the trigger: the same tar-extracted image entered through powershell (our usual path) ...
+    "################ isolation=$iso runtime=$v mode=mirror-tree, powershell entry"
+    RunContainer "oldrt-mirror-$v" $iso "inplace" $Minutes
+    # ... and the COPY-layer image (built in the upgraded-in-build leg) entered with bash directly.
+    if (docker image inspect "oldrt-inplace-$v" 2>$null) {
+      "################ isolation=$iso runtime=$v mode=copy-tree, bash entry"
+      $id = "$(docker run -d --isolation=$iso --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' "oldrt-inplace-$v" C:\msys64\usr\bin\bash.exe -lc $cmd 2>&1 | Select-Object -Last 1)".Trim()
+      if ($id -match '^[0-9a-f]{12,}$') {
+        $deadline = (Get-Date).AddMinutes($Minutes)
+        do { Start-Sleep 5; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
+        $out = @(docker logs $id 2>&1 | ForEach-Object { "$_" })
+        $out | Where-Object { $_ -notmatch 'fork: retry' } | Select-Object -First 12
+        "fork errors: $(@($out | Where-Object { $_ -match 'dofork|child_copy|child_info_fork' }).Count)  exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
+        $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+      } else { "docker run failed: $id" }
+    }
   }
 }
 "done"
