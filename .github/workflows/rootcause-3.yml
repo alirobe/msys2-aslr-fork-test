@@ -1,0 +1,16 @@
+name: Root cause 3, image map source over container start, by layer placement
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Container image
+        default: mcr.microsoft.com/windows/servercore:ltsc2019
+jobs:
+  rootcause3:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: sampler, timeline, late start, read first, single layer
+        shell: pwsh
+        timeout-minutes: 120
+        run: ./rootcause3.ps1 -Base "${{ inputs.base }}"
