@@ -1,0 +1,16 @@
+name: Root cause, Server 2019 Hyper-V fork failure with bash as entry process
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Container image
+        default: mcr.microsoft.com/windows/servercore:ltsc2019
+jobs:
+  rootcause:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: runtime bases in entry, exec'd and child processes
+        shell: pwsh
+        timeout-minutes: 120
+        run: ./rootcause2019.ps1 -Base "${{ inputs.base }}"
