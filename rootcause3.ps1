@@ -40,7 +40,8 @@ foreach ($k in 1..$N) {
 "FROM $Base`nCOPY msys64 C:/msys64`nCOPY samp C:/samp" | Set-Content "$root\c26\Dockerfile.base"
 "FROM rc3-base`nCOPY msys-2.0.dll C:/msys64/usr/bin/msys-2.0.dll`nCOPY samp C:/samp`nRUN mkdir C:\samp\plain && copy C:\Windows\System32\version.dll C:\samp\plain\P01.dll" | Set-Content "$t\Dockerfile.top"
 docker build -t rc3-base -f "$root\c26\Dockerfile.base" "$root\c26" | Select-Object -Last 1
-docker build -t rc3-top -f "$t\Dockerfile.top" $t | Select-Object -Last 1
+# The RUN step needs Hyper-V isolation: the 2019 image cannot run process-isolated on the 2022 host.
+docker build --isolation=hyperv -t rc3-top -f "$t\Dockerfile.top" $t 2>&1 | Select-Object -Last 3
 # Single layer: the flagged runtime already in the tree when it is copied in, so no copy of it sits underneath.
 Copy-Item $flagged $plain -Force
 docker build -t rc3-single -f "$root\c26\Dockerfile.base" "$root\c26" | Select-Object -Last 1
