@@ -80,7 +80,7 @@ function Collect {
 }
 function Probe($image, $label, [string]$entry, [string]$extra = '') {
   if (-not $Parallel) { "################ $label  (${image}: $entry)" }
-  $id = "$(Invoke-Expression "docker run -d $extra --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
+  $id = "$(Invoke-Expression "docker run -d $extra --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\cygwin\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
   if ($id -notmatch '^[0-9a-f]{12,}$') { "################ $label  (${image}: $entry)"; "docker run failed: $id"; return }
   if ($Parallel) { "started $label -> $($id.Substring(0, 12))"; $script:pending += [pscustomobject]@{ Id = $id; Label = $label; Image = $image; Entry = $entry }; return }
   $deadline = (Get-Date).AddMinutes(6)
@@ -97,6 +97,29 @@ function Probe($image, $label, [string]$entry, [string]$extra = '') {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 15) {
+  # Upstream Cygwin in the same container: cygwin1.dll has carried dynamicbase since 3.4.0 and the same
+  # init_installation_root open, so bash as the entry process should fail the same way. Current Cygwin from its
+  # setup program, installed on this host, copied in as a layer.
+  $cyg = "$root\cyg"; New-Item -ItemType Directory "$cyg\rt" -Force | Out-Null
+  Fetch "https://cygwin.com/setup-x86_64.exe" "$cyg\setup.exe"
+  if (-not (Test-Path "$cyg\cygwin\bin\bash.exe")) {
+    $p = Start-Process -FilePath "$cyg\setup.exe" -ArgumentList @('-q', '-B', '-n', '-N', '-d', '-O', '-W', '-X', '-s', 'https://mirrors.kernel.org/sourceware/cygwin/', '-R', "$cyg\cygwin", '-l', "$cyg\pkgs", '-P', 'bash,coreutils,sed,gawk,grep,util-linux') -PassThru -Wait
+    "cygwin setup exit $($p.ExitCode)"
+  }
+  foreach ($sh in 'probe-entry.sh', 'scale.sh', 'later.sh') {
+    (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" -replace 'msys-2.0.dll', 'cygwin1.dll' -replace 'C:\\\\msys64\\\\usr\\\\bin\\\\msys-2.0.dll', 'C:\\cygwin\\bin\\cygwin1.dll' -replace '/usr/bin:', '/bin:/usr/bin:' | Set-Content "$cyg\cygwin\$sh" -NoNewline
+  }
+  & "$root\pe-flags.ps1" -Paths "$cyg\cygwin\bin\cygwin1.dll"
+  "FROM $Base`nCOPY cygwin C:/cygwin" | Set-Content "$cyg\Dockerfile"
+  docker build -t rc3-cygwin -f "$cyg\Dockerfile" $cyg | Select-Object -Last 1
+  $cbash = 'C:\cygwin\bin\bash.exe --norc --noprofile'
+  $cscale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
+  Probe rc3-cygwin 'cygwin: bash as entry' "$cbash -c `"$cscale`""
+  Probe rc3-cygwin 'cygwin: later read' "$cbash /later.sh"
+  Probe rc3-cygwin 'cygwin: bash started from cmd' "cmd /c $cbash -c `"$cscale`""
+  Collect; "done"; return
 }
 if ($Round -eq 14) {
   # Re-exec edge cases on the general predicate build, with the attribute-only build alongside for comparison.
