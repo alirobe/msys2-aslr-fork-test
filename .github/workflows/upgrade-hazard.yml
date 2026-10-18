@@ -7,6 +7,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: msys2/setup-msys2@v2
+        id: msys2
         with:
           msystem: MSYS
           update: true
@@ -15,7 +16,3 @@ jobs:
         shell: pwsh
         run: ./upgrade-hazard-gh.ps1 -Msys2 "${{ steps.msys2.outputs.msys2-location }}"
         id: run
-      - name: flag every usr/bin DLL and exe dynamicbase, then the hazard twice (location fallback)
-        if: failure()
-        shell: pwsh
-        run: ./upgrade-hazard-gh.ps1 -Msys2 "D:\a\_temp\msys64"

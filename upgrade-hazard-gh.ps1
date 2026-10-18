@@ -4,6 +4,7 @@
 # runtime caches whether the directory exists for as long as any MSYS2 process runs.
 param([string]$Msys2 = 'D:\a\_temp\msys64')
 $ErrorActionPreference = 'Continue'
+if (-not (Test-Path "$Msys2\usr\bin\bash.exe")) { throw "no MSYS2 at '$Msys2'" }
 "msys2 at $Msys2"
 $m = (Get-ProcessMitigation -System).ASLR
 "system ASLR: ForceRelocateImages=$($m.ForceRelocateImages) BottomUp=$($m.BottomUp)"
