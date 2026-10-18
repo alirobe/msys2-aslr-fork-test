@@ -10,11 +10,19 @@ $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
 $root = $PSScriptRoot
+# Downloads are cached under cache\ by URL path, so a host that runs many rounds fetches each file once.
+$cache = Join-Path $root 'cache'; New-Item -ItemType Directory -Path $cache -Force | Out-Null
+function Fetch([string]$url, [string]$out) {
+  $key = Join-Path $cache (($url -replace '^https?://', '') -replace '[\\/:*?"<>|]', '_')
+  if (-not (Test-Path $key)) { Invoke-WebRequest -Uri $url -OutFile $key }
+  Copy-Item $key $out -Force
+}
 "stage: downloads"
-Invoke-WebRequest -Uri "https://github.com/msys2/msys2-installer/releases/download/2026-09-27/msys2-base-x86_64-20260927.sfx.exe" -OutFile "$root\base2026.sfx.exe"
+Fetch "https://github.com/msys2/msys2-installer/releases/download/2026-09-27/msys2-base-x86_64-20260927.sfx.exe" "$root\base2026.sfx.exe"
+if (Test-Path "$root\c26") { Remove-Item "$root\c26" -Recurse -Force }
 & "$root\base2026.sfx.exe" -y -o"$root\c26" | Out-Null
 Start-Sleep 5
-Invoke-WebRequest -Uri $TodayPkgUrl -OutFile "$root\today.pkg.tar.zst"
+Fetch $TodayPkgUrl "$root\today.pkg.tar.zst"
 $tu = & "$root\c26\msys64\usr\bin\cygpath.exe" -u $root
 & "$root\c26\msys64\usr\bin\bash.exe" -lc "cd '$tu' && mkdir -p t && tar -xf today.pkg.tar.zst -C t usr/bin/msys-2.0.dll && cp t/usr/bin/msys-2.0.dll flagged.dll && rm -rf t" | Out-Null
 $flagged = "$root\flagged.dll"; $plain = "$root\c26\msys64\usr\bin\msys-2.0.dll"
@@ -93,7 +101,7 @@ if ($Round -eq 13) {
   # The general re-exec predicate: entry bash, the later-read case and exit code in containers (run once per
   # isolation), plus a no-false-positive check on the host itself: bash from the extracted tree with the re-exec DLL
   # must keep the pid it was started with.
-  Invoke-WebRequest -Uri $ReexecDllUrl -OutFile "$t\reexec.dll"
+  Fetch $ReexecDllUrl "$t\reexec.dll"
   & "$root\pe-flags.ps1" -Paths "$t\reexec.dll"
   "FROM rc3-base`nCOPY reexec.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.reexec"
   docker build -t rc3-reexec -f "$t\Dockerfile.reexec" $t | Select-Object -Last 1
@@ -114,7 +122,7 @@ if ($Round -eq 13) {
 if ($Round -eq 12) {
   # The three runtimes as the container's entry bash under the chosen isolation, plus the map-source sampler.
   foreach ($pair in @(@('reexec', $ReexecDllUrl), @('patched', $PatchedDllUrl))) {
-    Invoke-WebRequest -Uri $pair[1] -OutFile "$t\$($pair[0]).dll"
+    Fetch $pair[1] "$t\$($pair[0]).dll"
     "FROM rc3-base`nCOPY $($pair[0]).dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$($pair[0])"
     docker build -t "rc3-$($pair[0])" -f "$t\Dockerfile.$($pair[0])" $t | Select-Object -Last 1
   }
@@ -129,7 +137,7 @@ if ($Round -eq 10) {
   # vs shipped: bash as entry, then the later-read case (bash starts, a native process reads the DLL, bash forks), then
   # exit-code propagation through the re-exec.
   foreach ($pair in @(@('reexec', $ReexecDllUrl), @('patched', $PatchedDllUrl))) {
-    Invoke-WebRequest -Uri $pair[1] -OutFile "$t\$($pair[0]).dll"
+    Fetch $pair[1] "$t\$($pair[0]).dll"
     "FROM rc3-base`nCOPY $($pair[0]).dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$($pair[0])"
     docker build -t "rc3-$($pair[0])" -f "$t\Dockerfile.$($pair[0])" $t | Select-Object -Last 1
   }
@@ -145,7 +153,7 @@ if ($Round -eq 10) {
 }
 if ($Round -eq 9) {
   # The patched runtime (installation root found with an attribute-only open) over the same tree, bash as entry.
-  Invoke-WebRequest -Uri $PatchedDllUrl -OutFile "$t\patched.dll"
+  Fetch $PatchedDllUrl "$t\patched.dll"
   & "$root\pe-flags.ps1" -Paths "$t\patched.dll", "$t\msys-2.0.dll"
   "patched sha256 $((Get-FileHash "$t\patched.dll").Hash.ToLower().Substring(0, 12))  shipped 3.6.11-3 sha256 $((Get-FileHash "$t\msys-2.0.dll").Hash.ToLower().Substring(0, 12))"
   "FROM rc3-base`nCOPY patched.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.patched"

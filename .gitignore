@@ -2,3 +2,4 @@
 *.out
 rc*.log
 rc*.txt
+cache/
