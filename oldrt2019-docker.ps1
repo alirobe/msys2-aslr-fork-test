@@ -12,7 +12,9 @@ param([string]$Base = "mcr.microsoft.com/windows/servercore:10.0.17763.3770", [s
       [string]$RebuiltDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/rebuilt-3.4.3-dec2022/msys-2.0.dll",
       [string]$GenuinePkgUrl = "https://github.com/msys2/msys2-archive/releases/download/2022-12-16-msys-x86_64/msys2-runtime-3.4-3.4.2-1-x86_64.pkg.tar.zst",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst",
-      [string[]]$Variants = @('342', '342-nodyn', '343', '336', 'now'), [int]$Minutes = 15, [switch]$SkipCopiedIn, [switch]$MirrorOnly)
+      [string[]]$Variants = @('342', '342-nodyn', '343', '336', 'now'), [int]$Minutes = 15, [switch]$SkipCopiedIn, [switch]$MirrorOnly,
+      [string]$P386DllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll",
+      [string]$P387DllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec2-3.6.11/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -35,6 +37,11 @@ $rtu = & $cyg -u "$root\ctx\rt"
 # installed name, as dscho's reproducer does, so pacman -U treats it as an upgrade.
 & $bash26 -lc "cd '$rtu' && rm -rf rp && mkdir rp && tar -xf genuine.pkg.tar.zst -C rp && sed -i -e 's/^pkgname = msys2-runtime-3.4$/pkgname = msys2-runtime/' -e 's/^pkgbase = msys2-runtime-3.4$/pkgbase = msys2-runtime/' -e '/^conflict = msys2-runtime$/d' -e '/^provides = msys2-runtime=/d' rp/.PKGINFO && grep -E '^(pkgname|pkgbase|conflict|provides)' rp/.PKGINFO && cd rp && tar --zstd -cf ../genuine.pkg.tar.zst .BUILDINFO .MTREE .PKGINFO usr && cd .. && rm -rf rp && ls -la genuine.pkg.tar.zst"
 Copy-Item "$root\ctx\msys64\usr\bin\msys-2.0.dll" "$root\ctx\rt\msys-2.0.dll.336"
+# The two fixed runtimes (#386 attribute-only open, #387 re-exec) as packages: today's package with the DLL swapped.
+foreach ($pp in @(@('p386', $P386DllUrl), @('p387', $P387DllUrl))) {
+  Invoke-WebRequest -Uri $pp[1] -OutFile "$root\ctx\rt\msys-2.0.dll.$($pp[0])"
+  & $bash26 -lc "cd '$rtu' && rm -rf pk && mkdir pk && tar -xf today.pkg.tar.zst -C pk && cp msys-2.0.dll.$($pp[0]) pk/usr/bin/msys-2.0.dll && cd pk && tar --zstd -cf ../$($pp[0]).pkg.tar.zst .BUILDINFO .MTREE .PKGINFO usr && cd .. && rm -rf pk && ls -la $($pp[0]).pkg.tar.zst"
+}
 Copy-Item "$root\oldrt2019-test.ps1" "$root\ctx\"
 (Get-Content "$root\scale.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\ctx\msys64\scale.sh" -NoNewline
 (Get-Content "$root\probe-exe.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\ctx\msys64\probe-exe.sh" -NoNewline
@@ -70,7 +77,7 @@ foreach ($iso in $Isolations) {
   } }
   # In-place upgrade inside docker build, as the 2022 image was made: pacman -U of the runtime package in a RUN layer.
   foreach ($v in $Variants) {
-    $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } default { $null } }
+    $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } 'p386' { 'p386.pkg.tar.zst' } 'p387' { 'p387.pkg.tar.zst' } default { $null } }
     if (-not $pkg -or $MirrorOnly) { continue }
     "################ isolation=$iso runtime=$v mode=upgraded-in-build"
     # Each MSYS command in its own shell, as dscho's reproducer does: a shell that has just replaced its own runtime
@@ -100,7 +107,7 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
   # another fresh shell afterwards, then docker run with bash -lc as the container's entry process.
   if (-not (Test-Path "$root\ctx\sdk-base.tar")) { & "$env:SystemRoot\System32\tar.exe" -cf "$root\ctx\sdk-base.tar" -C "$root\ctx" msys64 }
   foreach ($v in $Variants) {
-    $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } default { $null } }
+    $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } 'p386' { 'p386.pkg.tar.zst' } 'p387' { 'p387.pkg.tar.zst' } default { $null } }
     if (-not $pkg) { continue }
     "################ isolation=$iso runtime=$v mode=mirror (tar-extracted tree, bash as entry process)"
     @"

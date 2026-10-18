@@ -7,7 +7,7 @@ $bin = 'C:\msys64\usr\bin'
 $env:MSYSTEM = 'MSYS'; $env:CHERE_INVOKING = '1'
 function Flag($p) { $b = [IO.File]::ReadAllBytes($p); $pe = [BitConverter]::ToInt32($b, 0x3c); ([BitConverter]::ToUInt16($b, $pe + 94) -band 0x40) -ne 0 }
 function ClearBit($p) { $b = [IO.File]::ReadAllBytes($p); $pe = [BitConverter]::ToInt32($b, 0x3c); $c = [BitConverter]::ToUInt16($b, $pe + 94); [Array]::Copy([BitConverter]::GetBytes([uint16]($c -band (-bnot 0x40))), 0, $b, $pe + 94, 2); [IO.File]::WriteAllBytes($p, $b) }
-$src = switch ($Variant) { '336' { 'C:\rt\msys-2.0.dll.336' } '342' { 'C:\rt\msys-2.0.dll.342' } '342-nodyn' { 'C:\rt\msys-2.0.dll.342' } '343' { 'C:\rt\msys-2.0.dll.343' } 'now' { 'C:\rt\msys-2.0.dll.now' } 'inplace' { $null } }
+$src = switch ($Variant) { '336' { 'C:\rt\msys-2.0.dll.336' } '342' { 'C:\rt\msys-2.0.dll.342' } '342-nodyn' { 'C:\rt\msys-2.0.dll.342' } '343' { 'C:\rt\msys-2.0.dll.343' } 'now' { 'C:\rt\msys-2.0.dll.now' } 'p386' { 'C:\rt\msys-2.0.dll.p386' } 'p387' { 'C:\rt\msys-2.0.dll.p387' } 'inplace' { $null } }
 if ($src) { Copy-Item $src "$bin\msys-2.0.dll" -Force }
 if ($Variant -eq '342-nodyn') { ClearBit "$bin\msys-2.0.dll" }
 "runtime: $Variant  dynamicbase: $(Flag "$bin\msys-2.0.dll")  size: $((Get-Item "$bin\msys-2.0.dll").Length)  sha256: $((Get-FileHash "$bin\msys-2.0.dll").Hash.ToLower().Substring(0,12))"
