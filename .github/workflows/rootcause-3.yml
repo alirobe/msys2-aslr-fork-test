@@ -6,8 +6,11 @@ on:
         description: Container image
         default: mcr.microsoft.com/windows/servercore:ltsc2019
       round:
-        description: 3 (sampler, late, read first, single layer), 4 (access kinds, sharing, strace), 5 (file trace, SysMain stopped), 6 (loader test with a plain exe), 7 (handle operations, kernel file traces), 8 (access rights one at a time, plain DLL control), 9 (patched runtime, bash as entry), 10, 12, 13 (general re-exec, host check), 14 (edge cases) or 15 (upstream Cygwin)
+        description: 3 (sampler, late, read first, single layer), 4 (access kinds, sharing, strace), 5 (file trace, SysMain stopped), 6 (loader test with a plain exe), 7 (handle operations, kernel file traces), 8 (access rights one at a time, plain DLL control), 9 (patched runtime, bash as entry), 10, 12, 13 (general re-exec, host check), 14 (edge cases), 15 (upstream Cygwin), 16 (every DLL and exe flagged, gawk as entry and spawned later, before and after), 17 (does a moved file stay moved), 19 (is a swept file moved when the open returns) or 20 (fresh maps after the entry's sweep)
         default: '3'
+      reexec_dll_url:
+        description: The re-exec runtime build under test (release asset URL)
+        default: https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec3-3.6.11/msys-2.0.dll
 jobs:
   rootcause3:
     runs-on: windows-2022
@@ -16,4 +19,4 @@ jobs:
       - name: sampler, timeline, late start, read first, single layer
         shell: pwsh
         timeout-minutes: 120
-        run: ./rootcause3.ps1 -Base "${{ inputs.base }}" -Round ${{ inputs.round }}
+        run: ./rootcause3.ps1 -Base "${{ inputs.base }}" -Round ${{ inputs.round }} -ReexecDllUrl "${{ inputs.reexec_dll_url }}"

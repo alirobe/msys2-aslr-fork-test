@@ -22,6 +22,17 @@ class Sampler3
     [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr FindFirstFileW(string f, IntPtr data);
     [DllImport("kernel32")] static extern bool FindClose(IntPtr h);
     [DllImport("psapi", CharSet = CharSet.Unicode)] static extern uint GetMappedFileNameW(IntPtr proc, IntPtr addr, StringBuilder sb, uint n);
+    [DllImport("psapi", CharSet = CharSet.Unicode, SetLastError = true)] static extern bool EnumProcessModulesEx(IntPtr proc, [Out] IntPtr[] mods, uint cb, out uint needed, uint filter);
+    [DllImport("psapi", CharSet = CharSet.Unicode)] static extern uint GetModuleBaseNameW(IntPtr proc, IntPtr mod, StringBuilder sb, uint n);
+    [DllImport("kernel32", SetLastError = true)] static extern IntPtr OpenProcess(uint access, bool inherit, int pid);
+    [DllImport("ntdll")] static extern int NtQueryInformationProcess(IntPtr proc, int cls, IntPtr buf, uint len, out uint ret);
+
+    static long Ppid(int pid)
+    {
+        IntPtr hp = OpenProcess(0x0400, false, pid); if (hp == IntPtr.Zero) return -1;
+        IntPtr buf = Marshal.AllocHGlobal(48); uint ret; int s = NtQueryInformationProcess(hp, 0, buf, 48, out ret); NtClose(hp);
+        return s == 0 ? Marshal.ReadInt64(buf, 40) : -1; // PROCESS_BASIC_INFORMATION.InheritedFromUniqueProcessId
+    }
     [DllImport("ntdll")] static extern int NtOpenFile(out IntPtr h, uint access, ref OBJECT_ATTRIBUTES oa, out IO_STATUS_BLOCK io, uint share, uint opts);
     [DllImport("ntdll")] static extern int NtQueryInformationFile(IntPtr h, out IO_STATUS_BLOCK io, IntPtr buf, uint len, int cls);
     [DllImport("ntdll")] static extern int NtQueryVolumeInformationFile(IntPtr h, out IO_STATUS_BLOCK io, IntPtr buf, uint len, int cls);
@@ -90,6 +101,35 @@ class Sampler3
                     IntPtr fh = OpenById(vol, id, out st); Console.WriteLine("t={0:F1} {1} by-id open {2:X}", Up(), tag, st); if (fh != IntPtr.Zero) NtClose(fh); NtClose(vol); break;
                 }
             case "acc": { uint acc = Convert.ToUInt32(a[2], 16); h = Open(nt, IntPtr.Zero, acc | 0x100000, OPTS, out st); Console.WriteLine("t={0:F1} {1} access {2:X} open {3:X}", Up(), tag, acc, st); if (h != IntPtr.Zero) NtClose(h); break; }
+            case "procs":
+                {
+                    // Every bash, sh and gawk process: for the exe, the runtime and gmp, the base and the file the mapping is backed by.
+                    foreach (var p in Process.GetProcesses())
+                    {
+                        if (!(p.ProcessName == "bash" || p.ProcessName == "sh" || p.ProcessName == "gawk")) continue;
+                        IntPtr hp = OpenProcess(0x0400 | 0x0010, false, p.Id);
+                        if (hp == IntPtr.Zero) { Console.WriteLine("pid {0} {1}: open failed {2}", p.Id, p.ProcessName, Marshal.GetLastWin32Error()); continue; }
+                        IntPtr[] mods = new IntPtr[512]; uint needed;
+                        if (!EnumProcessModulesEx(hp, mods, (uint)(mods.Length * IntPtr.Size), out needed, 0x3)) { Console.WriteLine("pid {0} {1}: enum failed {2}", p.Id, p.ProcessName, Marshal.GetLastWin32Error()); continue; }
+                        Console.WriteLine("pid {0} ppid {1} {2}", p.Id, Ppid(p.Id), p.ProcessName);
+                        for (int i = 0; i < needed / IntPtr.Size; i++)
+                        {
+                            var bn = new StringBuilder(260); GetModuleBaseNameW(hp, mods[i], bn, 260); string b = bn.ToString().ToLowerInvariant();
+                            if (!(b == "msys-2.0.dll" || b.EndsWith(".exe") || b == "msys-gmp-10.dll" || b == "fork.dll")) continue;
+                            var mf = new StringBuilder(1024); GetMappedFileNameW(hp, mods[i], mf, 1024);
+                            Console.WriteLine("   0x{0:X} {1,-16} {2}", mods[i].ToInt64(), b, mf);
+                        }
+                        NtClose(hp);
+                    }
+                    return;
+                }
+            case "accdir":
+                {
+                    // Open every DLL and exe in a directory with FILE_READ_DATA and close it again, as a sweep would.
+                    int n = 0, failed = 0;
+                    foreach (string f in Directory.GetFiles(path)) { if (!f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) && !f.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) continue; h = Open(@"\??\" + f, IntPtr.Zero, 0x1 | 0x100000, OPTS, out st); if (h != IntPtr.Zero) { NtClose(h); n++; } else failed++; }
+                    Console.WriteLine("t={0:F1} accdir {1}: {2} files opened for read, {3} failed", Up(), path, n, failed); return;
+                }
             case "sd": { h = Open(nt, IntPtr.Zero, 0x20000 | 0x100000, OPTS, out st); IntPtr buf = Marshal.AllocHGlobal(4096); uint need; int s = NtQuerySecurityObject(h, 0x7, buf, 4096, out need); Console.WriteLine("t={0:F1} {1} open {2:X} sd {3:X}", Up(), tag, st, s); NtClose(h); break; }
             case "ea": { h = Open(nt, IntPtr.Zero, 0x8 | 0x100000, OPTS, out st); IntPtr buf = Marshal.AllocHGlobal(4096); IO_STATUS_BLOCK io; int s = NtQueryEaFile(h, out io, buf, 4096, true, IntPtr.Zero, 0, IntPtr.Zero, true); Console.WriteLine("t={0:F1} {1} open {2:X} ea {3:X}", Up(), tag, st, s); NtClose(h); break; }
             case "attrs": Console.WriteLine("t={0:F1} {1} attrs {2:X}", Up(), tag, GetFileAttributesW(path)); break;

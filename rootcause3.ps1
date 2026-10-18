@@ -5,8 +5,10 @@ param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
       [int]$Round = 3, [string]$Isolation = 'hyperv', [switch]$Parallel,
       [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll",
-      [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec2-3.6.11/msys-2.0.dll")
+      [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec2-3.6.11/msys-2.0.dll",
+      [string]$BeforeDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec2-3.6.11/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
+function SetFlag($p) { $b = [IO.File]::ReadAllBytes($p); $pe = [BitConverter]::ToInt32($b, 0x3c); $c = [BitConverter]::ToUInt16($b, $pe + 94); [Array]::Copy([BitConverter]::GetBytes([uint16]($c -bor 0x40)), 0, $b, $pe + 94, 2); [IO.File]::WriteAllBytes($p, $b) }
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
 $root = $PSScriptRoot
@@ -37,7 +39,7 @@ Copy-Item "$root\probe-ps.ps1" "$root\c26\msys64\"
 foreach ($sh in 'scale.sh', 'later.sh', 'exit7.sh', 'edge.sh') { (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\$sh" -NoNewline }
 # Lower layer: the tree, L* (flagged, only here) and B* (unflagged here, flagged copies on top).
 $s = "$root\c26\samp"; New-Item -ItemType Directory "$s\lower", "$s\both" -Force | Out-Null
-Copy-Item "$root\stdin.cmd", "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd" $s
+Copy-Item "$root\stdin.cmd", "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd", "$root\s9-evict.cmd", "$root\s10-pending.cmd" $s
 # Top layer: the flagged runtime over the tree's own, T* and R* (only here) and the flagged B*.
 $t = "$root\top"; New-Item -ItemType Directory "$t\samp\top", "$t\samp\both" -Force | Out-Null
 Copy-Item $flagged "$t\msys-2.0.dll"
@@ -97,6 +99,73 @@ function Probe($image, $label, [string]$entry, [string]$extra = '') {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 20) {
+  # After the entry bash (build under test, all-flagged image from round 16) has started and swept: where does a fresh
+  # native map of gmp, bash.exe and the runtime come from, and what do the live processes map?
+  if (-not (docker image inspect rc3-all-after 2>$null)) { "rc3-all-after missing; run round 16 first"; return }
+  "FROM rc3-all-after`nCOPY samp C:/samp`nCOPY msys64/probe-ps.ps1 C:/msys64/probe-ps.ps1" | Set-Content "$root\c26\Dockerfile.probe"
+  docker build -t rc3-all-after-probe -f "$root\c26\Dockerfile.probe" "$root\c26" | Select-Object -Last 1
+  $id = "$(Invoke-Expression "docker run -d --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' rc3-all-after-probe $bash /probe-entry.sh entry 90" 2>&1 | Select-Object -Last 1)".Trim()
+  if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; return }
+  $deadline = (Get-Date).AddMinutes(4)
+  do { Start-Sleep 3; $log = docker logs $id 2>&1 | Out-String } while ($log -notmatch 'WAITING' -and (Get-Date) -lt $deadline)
+  "--- fresh native maps while the entry bash waits"
+  foreach ($f in 'C:\msys64\usr\bin\msys-gmp-10.dll', 'C:\msys64\usr\bin\msys-iconv-2.dll', 'C:\msys64\usr\bin\gawk.exe', 'C:\msys64\usr\bin\bash.exe', 'C:\msys64\usr\bin\msys-2.0.dll', 'C:\msys64\usr\lib\gawk\fork.dll') { Cap "exec $id C:\samp\sampler3.exe map $f" 60 }
+  "--- live processes"
+  Cap "exec $id C:\samp\sampler3.exe procs C:\" 60
+  "--- gawk started by docker exec: its gmp, then gmp read, then its forks"
+  Cap "exec $id C:\msys64\usr\bin\gawk.exe -v DLL=/usr/bin/msys-gmp-10.dll -f /gawk-later.awk" 120
+  Cap "exec $id C:\samp\sampler3.exe map C:\msys64\usr\bin\msys-gmp-10.dll" 60
+  $deadline = (Get-Date).AddMinutes(3)
+  do { Start-Sleep 5; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
+  "--- entry log"; docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
+  $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+  "done"; return
+}
+if ($Round -eq 19) {
+  Probe rc3-top 'is a swept file moved when the open returns: fresh maps at once and after 10 s; a read-open-only file mapped at once' "cmd /c C:\samp\s10-pending.cmd"
+  Collect; "done"; return
+}
+if ($Round -eq 18) {
+  # Seen from outside: which file the wrapper, the re-exec'd root and a fork child map the exe and the runtime from, in
+  # the all-flagged image with the build under test (rc3-all-after, from round 16) and round 13's rc3-reexec.
+  $Parallel = $false
+  foreach ($img in 'rc3-all-after', 'rc3-reexec') {
+    if (-not (docker image inspect $img 2>$null)) { "$img missing; run round 16 or 13 first"; continue }
+    "FROM $img`nCOPY samp C:/samp" | Set-Content "$root\c26\Dockerfile.probe"
+    docker build -t "$img-probe" -f "$root\c26\Dockerfile.probe" "$root\c26" | Select-Object -Last 1
+    Probe "$img-probe" "${img}: entry bash waits 60 s under observation, then forks" "$bash /probe-entry.sh entry 60"
+  }
+  "done"; return
+}
+if ($Round -eq 17) {
+  Probe rc3-top 'does a moved file stay moved: after a sweep of 400 other files, after 30 s, under a held map' "cmd /c C:\samp\s9-evict.cmd"
+  Collect; "done"; return
+}
+if ($Round -eq 16) {
+  # Every DLL and exe under usr\ flagged dynamicbase. gawk as the entry process (a linked DLL, then the dlopen'd fork
+  # extension, each read later by another process), and gawk spawned by an entry bash that never loaded gawk's DLLs.
+  # The re-exec runtime as reviewed (before) and this build (after).
+  $a = "$root\allf"; if (Test-Path $a) { Remove-Item $a -Recurse -Force }
+  New-Item -ItemType Directory $a | Out-Null
+  Copy-Item "$root\c26\msys64" "$a\msys64" -Recurse
+  $n = 0; Get-ChildItem "$a\msys64\usr" -Recurse -Include *.dll, *.exe | ForEach-Object { SetFlag $_.FullName; $n++ }; "flagged $n DLLs and exes under usr"
+  foreach ($f in 'gawk-later.awk', 'bash-then-gawk.sh', 'probe-entry.sh', 'scale.sh') { (Get-Content "$root\$f" -Raw) -replace "`r`n", "`n" | Set-Content "$a\msys64\$f" -NoNewline }
+  Fetch $BeforeDllUrl "$a\before.dll"; Fetch $ReexecDllUrl "$a\after.dll"
+  & "$root\pe-flags.ps1" -Paths "$a\before.dll", "$a\after.dll", "$a\msys64\usr\bin\bash.exe", "$a\msys64\usr\bin\gawk.exe", "$a\msys64\usr\bin\msys-gmp-10.dll", "$a\msys64\usr\lib\gawk\fork.dll"
+  "FROM $Base`nCOPY msys64 C:/msys64" | Set-Content "$a\Dockerfile.all"
+  docker build -t rc3-all -f "$a\Dockerfile.all" $a | Select-Object -Last 1
+  foreach ($v in 'before', 'after') { "FROM rc3-all`nCOPY $v.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$a\Dockerfile.$v"; docker build -t "rc3-all-$v" -f "$a\Dockerfile.$v" $a | Select-Object -Last 1 }
+  $gawk = 'C:\msys64\usr\bin\gawk.exe'
+  $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
+  foreach ($v in 'before', 'after') {
+    Probe "rc3-all-$v" "${v}: bash as entry, all flagged" "$bash -c `"$scale`""
+    Probe "rc3-all-$v" "${v}: gawk as entry, a linked DLL read later" "$gawk -v DLL=/usr/bin/msys-gmp-10.dll -f /gawk-later.awk"
+    Probe "rc3-all-$v" "${v}: gawk as entry, the dlopen'd fork extension read later" "$gawk -v DLL=/usr/lib/gawk/fork.dll -f /gawk-later.awk"
+    Probe "rc3-all-$v" "${v}: bash as entry, gawk spawned later, its linked DLL read" "$bash /bash-then-gawk.sh"
+  }
+  Collect; "done"; return
 }
 if ($Round -eq 15) {
   # Upstream Cygwin in the same container: cygwin1.dll has carried dynamicbase since 3.4.0 and the same

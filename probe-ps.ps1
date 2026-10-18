@@ -6,3 +6,4 @@ foreach ($p in Get-Process bash -ErrorAction SilentlyContinue) {
   try { $p.Modules | Where-Object { $_.ModuleName -match 'msys-2\.0|bash|ntdll|kernel32' } | ForEach-Object { "  {0} base 0x{1:X} size 0x{2:X} {3}" -f $_.ModuleName, $_.BaseAddress.ToInt64(), $_.ModuleMemorySize, $_.FileName } } catch { "  modules: $_" }
   try { $m = Get-ProcessMitigation -Id $p.Id; "  ASLR force=$($m.ASLR.ForceRelocateImages) bottomup=$($m.ASLR.BottomUp) heva=$($m.ASLR.HighEntropy) requireinfo=$($m.ASLR.RequireInfo)" } catch { "  mitigation: $_" }
 }
+if (Test-Path C:\samp\sampler3.exe) { "--- mappings per process (sampler3 procs)"; & C:\samp\sampler3.exe procs C:\ }
