@@ -3,8 +3,9 @@
 Reproducible tests behind the MSYS2 and Cygwin fork-under-ASLR work of October 2026
 ([msys2-runtime#381](https://github.com/msys2/msys2-runtime/pull/381),
 [#386](https://github.com/msys2/msys2-runtime/pull/386), [#387](https://github.com/msys2/msys2-runtime/pull/387),
-[MSYS2-packages#6789](https://github.com/msys2/MSYS2-packages/pull/6789)). Every script runs on a GitHub Actions
-Windows runner from the workflows under `.github/workflows/`, and most also run on a Windows Server host with Docker.
+[MSYS2-packages#6789](https://github.com/msys2/MSYS2-packages/pull/6789)). The workflows under `.github/workflows/`
+run most scripts on GitHub Actions Windows runners, and most also run on a Windows Server host with Docker;
+`sysaslr-*.ps1` runs only on a host.
 Run links in the PR comments point at these workflows.
 
 ## Root cause of the Server 2019 container fork failure
