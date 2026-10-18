@@ -5,7 +5,7 @@ param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
       [int]$Round = 3, [string]$Isolation = 'hyperv', [switch]$Parallel,
       [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll",
-      [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec-3.6.11/msys-2.0.dll")
+      [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec2-3.6.11/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
 Start-Service docker -ErrorAction SilentlyContinue
 for ($i = 0; $i -lt 24 -and -not (docker info 2>$null); $i++) { Start-Sleep 5 }
@@ -88,6 +88,28 @@ function Probe($image, $label, [string]$entry) {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 13) {
+  # The general re-exec predicate: entry bash, the later-read case and exit code in containers (run once per
+  # isolation), plus a no-false-positive check on the host itself: bash from the extracted tree with the re-exec DLL
+  # must keep the pid it was started with.
+  Invoke-WebRequest -Uri $ReexecDllUrl -OutFile "$t\reexec.dll"
+  & "$root\pe-flags.ps1" -Paths "$t\reexec.dll"
+  "FROM rc3-base`nCOPY reexec.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.reexec"
+  docker build -t rc3-reexec -f "$t\Dockerfile.reexec" $t | Select-Object -Last 1
+  "################ host check: no re-exec outside a container"
+  Copy-Item "$t\reexec.dll" "$root\c26\msys64\usr\bin\msys-2.0.dll" -Force
+  $env:MSYSTEM = 'MSYS'
+  $p = Start-Process "$root\c26\msys64\usr\bin\bash.exe" -ArgumentList '--norc', '--noprofile', '-c', '"read -r w < /proc/$$/winpid; read -r pp < /proc/$$/ppid; echo bash winpid $w cygwin-ppid $pp; (echo fork ok)"' -NoNewWindow -PassThru -RedirectStandardOutput "$root\hostcheck.out" -RedirectStandardError "$root\hostcheck.err"
+  $p.WaitForExit(60000) | Out-Null
+  "started pid $($p.Id); " + (Get-Content "$root\hostcheck.out" -Raw) + (Get-Content "$root\hostcheck.err" -Raw)
+  "(same winpid as started pid means no re-exec)"
+  $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
+  Probe rc3-reexec 're-exec runtime, bash as entry' "$bash -c `"$scale`""
+  Probe rc3-reexec 're-exec runtime, later read' "$bash /later.sh"
+  Probe rc3-reexec 're-exec runtime, exit code (expect 7)' "$bash /exit7.sh"
+  Probe rc3-top 'shipped runtime, bash as entry, for comparison' "$bash -c `"$scale`""
+  Collect; "done"; return
 }
 if ($Round -eq 12) {
   # The three runtimes as the container's entry bash under the chosen isolation, plus the map-source sampler.
