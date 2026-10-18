@@ -3,7 +3,7 @@
 # container's boot timeline and filter state; then bash started late, bash after a read, and a single-layer image.
 param([string]$Base = "mcr.microsoft.com/windows/servercore:ltsc2019",
       [string]$TodayPkgUrl = "https://repo.msys2.org/msys/x86_64/msys2-runtime-3.6.11-3-x86_64.pkg.tar.zst", [int]$N = 16,
-      [int]$Round = 3, [string]$Isolation = 'hyperv',
+      [int]$Round = 3, [string]$Isolation = 'hyperv', [switch]$Parallel,
       [string]$PatchedDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/patched-3.6.11-attr-open/msys-2.0.dll",
       [string]$ReexecDllUrl = "https://github.com/alirobe/msys2-aslr-fork-test/releases/download/reexec-3.6.11/msys-2.0.dll")
 $ErrorActionPreference = "Continue"
@@ -55,10 +55,25 @@ function Cap([string]$a, [int]$sec) {
 }
 $bash = 'C:\msys64\usr\bin\bash.exe --norc --noprofile'
 $ps = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+$script:pending = @()
+function Collect {
+  # Parallel mode: wait for every queued container, then print each one's log in launch order.
+  foreach ($q in $script:pending) {
+    $deadline = (Get-Date).AddMinutes(10)
+    do { Start-Sleep 5; $running = "$(docker inspect -f '{{.State.Running}}' $q.Id 2>$null)".Trim() } while ($running -eq 'true' -and (Get-Date) -lt $deadline)
+    "################ $($q.Label)  ($($q.Image): $($q.Entry))"
+    if ($running -eq 'true') { "still running after 10 min; killing" }
+    docker logs $q.Id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
+    "exit code: $(docker inspect -f '{{.State.ExitCode}}' $q.Id)"
+    $p = Start-Process docker -ArgumentList "rm -f $($q.Id)" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+  }
+  $script:pending = @()
+}
 function Probe($image, $label, [string]$entry) {
-  "################ $label  (${image}: $entry)"
+  if (-not $Parallel) { "################ $label  (${image}: $entry)" }
   $id = "$(Invoke-Expression "docker run -d --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
-  if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; return }
+  if ($id -notmatch '^[0-9a-f]{12,}$') { "################ $label  (${image}: $entry)"; "docker run failed: $id"; return }
+  if ($Parallel) { "started $label -> $($id.Substring(0, 12))"; $script:pending += [pscustomobject]@{ Id = $id; Label = $label; Image = $image; Entry = $entry }; return }
   $deadline = (Get-Date).AddMinutes(6)
   do { Start-Sleep 3; $log = docker logs $id 2>&1 | Out-String; $running = "$(docker inspect -f '{{.State.Running}}' $id 2>$null)".Trim() } while ($log -notmatch 'WAITING' -and $running -eq 'true' -and (Get-Date) -lt $deadline)
   if ($log -match 'WAITING') {
@@ -85,7 +100,7 @@ if ($Round -eq 12) {
   foreach ($img in 'rc3-top', 'rc3-patched', 'rc3-reexec') { Probe $img "entry bash ($img)" "$bash -c `"$scale`"" }
   Probe rc3-top 'later read on the shipped runtime' "$bash /later.sh"
   Probe rc3-top 'sampler: map source per placement every 2 s, then timeline' "cmd /c C:\samp\sampler.cmd"
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 10) {
   # The re-exec runtime (root process re-execs once when its DLL is mapped from the layer) vs the attribute-only patch
@@ -104,7 +119,7 @@ if ($Round -eq 10) {
     Probe $img "later read: bash starts, a native process reads the DLL, bash forks ($img)" "$bash /later.sh"
   }
   Probe rc3-reexec 'exit code through the re-exec (expect 7)' "$bash /exit7.sh"
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 9) {
   # The patched runtime (installation root found with an attribute-only open) over the same tree, bash as entry.
@@ -116,34 +131,35 @@ if ($Round -eq 9) {
   $scale = 'uname -srv; /probe-entry.sh entry 0; /scale.sh 300 4 50; echo scale rc $?'
   Probe rc3-patched 'patched runtime, bash as entry: two forks, then 300 subshells, 4x50 parallel, timeouts and pipes' "$bash -c `"$scale`""
   Probe rc3-top 'shipped 3.6.11-3, same command, for comparison' "$bash -c `"$scale`""
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 8) {
   Probe rc3-top 'access rights in a read open, one at a time; full load of a plain DLL as control' "cmd /c C:\samp\s8-bits.cmd"
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 7) {
   Probe rc3-top 'handle operations before the first map; kernel file traces of bash with and without a fork' "cmd /c C:\samp\s7-ops.cmd"
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 6) {
   Probe rc3-top 'loader test: plain exe, parent maps, child maps; kernel trace' "cmd /c C:\samp\s6-loader.cmd"
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 5) {
   Probe rc3-top 'kernel file trace of a failing fork' "cmd /c C:\samp\s4-etw.cmd"
   Probe rc3-top 'SysMain stopped, then bash' "cmd /c C:\samp\s5-nosysmain.cmd"
-  "done"; return
+  Collect; "done"; return
 }
 if ($Round -eq 4) {
   Probe rc3-top 'access: attribute open, open, one-byte read, before the first map' "cmd /c C:\samp\s1-access.cmd"
   Probe rc3-top 'sharing: a held map, then a touch, then a new process maps' "cmd /c C:\samp\s2-share.cmd"
   Probe rc3-top 'strace of bash forking once, as entry' "cmd /c C:\samp\s3-strace.cmd"
-  "done"; return
+  Collect; "done"; return
 }
 Probe rc3-top 'sampler: a fresh image map per placement every 2 s from container start, then timeline' "cmd /c C:\samp\sampler.cmd"
 Probe rc3-top 'control: bash as entry' "$bash /probe-entry.sh entry 30"
 Probe rc3-top 'late only: nothing touches the runtime until bash at about 20 s' "cmd /c C:\samp\late.cmd"
 Probe rc3-top 'read first: copy the runtime to nul, then bash at once' "cmd /c C:\samp\readfirst.cmd"
 Probe rc3-single 'single layer: flagged runtime with no copy underneath, bash as entry' "$bash /probe-entry.sh single 30"
+Collect
 "done"
