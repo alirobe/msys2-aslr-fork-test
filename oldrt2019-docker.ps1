@@ -106,6 +106,9 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
   # Mirror of dscho's reproducer: tree extracted by tar inside the build step, runtime upgraded in a fresh shell,
   # another fresh shell afterwards, then docker run with bash -lc as the container's entry process.
   if (-not (Test-Path "$root\ctx\sdk-base.tar")) { & "$env:SystemRoot\System32\tar.exe" -cf "$root\ctx\sdk-base.tar" -C "$root\ctx" msys64 }
+  # The entry command lives in a file inside the image: Windows PowerShell 5.1 splits a native argument that
+  # contains double quotes, so an inline command reaches bash truncated.
+  "uname -a && for i in 1 2 3 4 5; do x=`$(echo `$i) && echo `"fork `$i ok`"; done; cp /c/packages/scale.sh /scale.sh && /scale.sh 300 4 50; echo `"scale exit `$?`"; pacman -Qk > /dev/null; echo `"Qk exit `$?`"`n" -replace "`r`n", "`n" | Set-Content "$root\ctx\entry.sh" -NoNewline
   foreach ($v in $Variants) {
     $pkg = switch ($v) { '342' { 'genuine.pkg.tar.zst' } 'now' { 'today.pkg.tar.zst' } 'p386' { 'p386.pkg.tar.zst' } 'p387' { 'p387.pkg.tar.zst' } default { $null } }
     if (-not $pkg) { continue }
@@ -136,9 +139,6 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
     $bout = @(docker build --no-cache --isolation=$iso -t "oldrt-mirror-$v" -f "$root\ctx\Dockerfile.mirror" "$root\ctx" 2>&1 | ForEach-Object { "$_" })
     if (-not ($bout -match 'Successfully built')) { "docker build failed; last lines:"; $bout | Select-Object -Last 30 | ForEach-Object { "  $_" }; continue }
     $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|after upgrade|Qk exit|Successfully built' }
-    # The entry command lives in a file inside the image: Windows PowerShell 5.1 splits a native argument that
-    # contains double quotes, so an inline command reaches bash truncated.
-    "uname -a && for i in 1 2 3 4 5; do x=`$(echo `$i) && echo `"fork `$i ok`"; done; cp /c/packages/scale.sh /scale.sh && /scale.sh 300 4 50; echo `"scale exit `$?`"; pacman -Qk > /dev/null; echo `"Qk exit `$?`"`n" -replace "`r`n", "`n" | Set-Content "$root\ctx\entry.sh" -NoNewline
     $cmd = 'bash /c/packages/entry.sh'
     $id = "$(docker run -d --isolation=$iso --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' "oldrt-mirror-$v" C:\msys64\usr\bin\bash.exe -lc $cmd 2>&1 | Select-Object -Last 1)".Trim()
     if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; continue }
