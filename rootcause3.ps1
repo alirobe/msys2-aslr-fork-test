@@ -34,10 +34,10 @@ $flagged = "$root\flagged.dll"; $plain = "$root\c26\msys64\usr\bin\msys-2.0.dll"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler3.exe" "$root\sampler3.cs"
 (Get-Content "$root\probe-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\probe-entry.sh" -NoNewline
 Copy-Item "$root\probe-ps.ps1" "$root\c26\msys64\"
-foreach ($sh in 'scale.sh', 'later.sh', 'exit7.sh') { (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\$sh" -NoNewline }
+foreach ($sh in 'scale.sh', 'later.sh', 'exit7.sh', 'edge.sh') { (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\$sh" -NoNewline }
 # Lower layer: the tree, L* (flagged, only here) and B* (unflagged here, flagged copies on top).
 $s = "$root\c26\samp"; New-Item -ItemType Directory "$s\lower", "$s\both" -Force | Out-Null
-Copy-Item "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd" $s
+Copy-Item "$root\stdin.cmd", "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd" $s
 # Top layer: the flagged runtime over the tree's own, T* and R* (only here) and the flagged B*.
 $t = "$root\top"; New-Item -ItemType Directory "$t\samp\top", "$t\samp\both" -Force | Out-Null
 Copy-Item $flagged "$t\msys-2.0.dll"
@@ -78,9 +78,9 @@ function Collect {
   }
   $script:pending = @()
 }
-function Probe($image, $label, [string]$entry) {
+function Probe($image, $label, [string]$entry, [string]$extra = '') {
   if (-not $Parallel) { "################ $label  (${image}: $entry)" }
-  $id = "$(Invoke-Expression "docker run -d --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
+  $id = "$(Invoke-Expression "docker run -d $extra --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $image $entry" 2>&1 | Select-Object -Last 1)".Trim()
   if ($id -notmatch '^[0-9a-f]{12,}$') { "################ $label  (${image}: $entry)"; "docker run failed: $id"; return }
   if ($Parallel) { "started $label -> $($id.Substring(0, 12))"; $script:pending += [pscustomobject]@{ Id = $id; Label = $label; Image = $image; Entry = $entry }; return }
   $deadline = (Get-Date).AddMinutes(6)
@@ -97,6 +97,18 @@ function Probe($image, $label, [string]$entry) {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 14) {
+  # Re-exec edge cases on the general predicate build, with the attribute-only build alongside for comparison.
+  Fetch $ReexecDllUrl "$t\reexec.dll"; Fetch $PatchedDllUrl "$t\patched.dll"
+  foreach ($n in 'reexec', 'patched') { "FROM rc3-base`nCOPY $n.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$n"; docker build -t "rc3-$n" -f "$t\Dockerfile.$n" $t | Select-Object -Last 1 }
+  foreach ($n in 'reexec', 'patched') {
+    Probe "rc3-$n" "$n edge cases, no tty" "$bash /edge.sh one 'two words' three"
+    Probe "rc3-$n" "$n edge cases, with a tty" "$bash /edge.sh one 'two words' three" '-t'
+    Probe "rc3-$n" "$n stdin through a pipe" "cmd /c C:\samp\stdin.cmd"
+    Probe "rc3-$n" "$n pacman as the entry process" "C:\msys64\usr\bin\pacman.exe -Qk"
+  }
+  Collect; "done"; return
 }
 if ($Round -eq 13) {
   # The general re-exec predicate: entry bash, the later-read case and exit code in containers (run once per
