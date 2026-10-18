@@ -1,0 +1,4 @@
+*.err
+*.out
+rc*.log
+rc*.txt
