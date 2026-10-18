@@ -124,12 +124,12 @@ if ($Round -eq 15) {
 if ($Round -eq 14) {
   # Re-exec edge cases on the general predicate build, with the attribute-only build alongside for comparison.
   Fetch $ReexecDllUrl "$t\reexec.dll"; Fetch $PatchedDllUrl "$t\patched.dll"
-  foreach ($n in 'reexec', 'patched') { "FROM rc3-base`nCOPY $n.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$n"; docker build -t "rc3-$n" -f "$t\Dockerfile.$n" $t | Select-Object -Last 1 }
-  foreach ($n in 'reexec', 'patched') {
-    Probe "rc3-$n" "$n edge cases, no tty" "$bash /edge.sh one 'two words' three"
-    Probe "rc3-$n" "$n edge cases, with a tty" "$bash /edge.sh one 'two words' three" '-t'
-    Probe "rc3-$n" "$n stdin through a pipe" "cmd /c C:\samp\stdin.cmd"
-    Probe "rc3-$n" "$n pacman as the entry process" "C:\msys64\usr\bin\pacman.exe -Qk"
+  foreach ($v in 'reexec', 'patched') { "FROM rc3-base`nCOPY $v.dll C:/msys64/usr/bin/msys-2.0.dll" | Set-Content "$t\Dockerfile.$v"; docker build -t "rc3-$v" -f "$t\Dockerfile.$v" $t | Select-Object -Last 1 }
+  foreach ($v in 'reexec', 'patched') {
+    Probe "rc3-$v" "$v edge cases, no tty" "$bash /edge.sh one 'two words' three"
+    Probe "rc3-$v" "$v edge cases, with a tty" "$bash /edge.sh one 'two words' three" '-t'
+    Probe "rc3-$v" "$v stdin through a pipe" "cmd /c C:\samp\stdin.cmd"
+    Probe "rc3-$v" "$v pacman as the entry process" "C:\msys64\usr\bin\pacman.exe -Qk"
   }
   Collect; "done"; return
 }
