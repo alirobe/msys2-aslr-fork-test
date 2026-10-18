@@ -13,6 +13,7 @@ $root = $PSScriptRoot
 # Downloads are cached under cache\ by URL path, so a host that runs many rounds fetches each file once.
 $cache = Join-Path $root 'cache'; New-Item -ItemType Directory -Path $cache -Force | Out-Null
 function Fetch([string]$url, [string]$out) {
+  if (Test-Path -LiteralPath $url) { Copy-Item $url $out -Force; return }   # a local file works in place of a URL
   $key = Join-Path $cache (($url -replace '^https?://', '') -replace '[\\/:*?"<>|]', '_')
   if (-not (Test-Path $key)) { Invoke-WebRequest -Uri $url -OutFile $key }
   Copy-Item $key $out -Force
