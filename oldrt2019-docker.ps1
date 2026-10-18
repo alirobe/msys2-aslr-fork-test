@@ -128,7 +128,7 @@ exit 0
 "@ | Set-Content "$root\ctx\build-step-mirror.ps1"
     @"
 FROM $Base
-COPY sdk-base.tar rt/$pkg build-step-mirror.ps1 C:/packages/
+COPY sdk-base.tar rt/$pkg build-step-mirror.ps1 entry.sh C:/packages/
 COPY msys64/scale.sh C:/packages/scale.sh
 COPY oldrt2019-test.ps1 C:/oldrt2019-test.ps1
 RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfile", "-File", "C:\\packages\\build-step-mirror.ps1"]
@@ -136,7 +136,10 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
     $bout = @(docker build --no-cache --isolation=$iso -t "oldrt-mirror-$v" -f "$root\ctx\Dockerfile.mirror" "$root\ctx" 2>&1 | ForEach-Object { "$_" })
     if (-not ($bout -match 'Successfully built')) { "docker build failed; last lines:"; $bout | Select-Object -Last 30 | ForEach-Object { "  $_" }; continue }
     $bout | Where-Object { $_ -match 'MSYS_NT|dofork|child_copy|child_info_fork|fork: |error|upgrading|after upgrade|Qk exit|Successfully built' }
-    $cmd = 'uname -a && for i in 1 2 3 4 5; do x=$(echo $i) && echo "fork $i ok"; done; cp /c/packages/scale.sh /scale.sh && /scale.sh 300 4 50; pacman -Qk > /dev/null; echo "Qk exit $?"'
+    # The entry command lives in a file inside the image: Windows PowerShell 5.1 splits a native argument that
+    # contains double quotes, so an inline command reaches bash truncated.
+    "uname -a && for i in 1 2 3 4 5; do x=`$(echo `$i) && echo `"fork `$i ok`"; done; cp /c/packages/scale.sh /scale.sh && /scale.sh 300 4 50; echo `"scale exit `$?`"; pacman -Qk > /dev/null; echo `"Qk exit `$?`"`n" -replace "`r`n", "`n" | Set-Content "$root\ctx\entry.sh" -NoNewline
+    $cmd = 'bash /c/packages/entry.sh'
     $id = "$(docker run -d --isolation=$iso --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' "oldrt-mirror-$v" C:\msys64\usr\bin\bash.exe -lc $cmd 2>&1 | Select-Object -Last 1)".Trim()
     if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; continue }
     $deadline = (Get-Date).AddMinutes($Minutes)
@@ -149,7 +152,7 @@ RUN ["C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", "-NoProfi
     "################ isolation=$iso runtime=$v mode=mirror-tree, powershell entry"
     RunContainer "oldrt-mirror-$v" $iso "inplace" $Minutes
     # ... and the COPY-layer image (built in the upgraded-in-build leg) entered with bash directly.
-    if (docker image inspect "oldrt-inplace-$v" 2>$null) {
+    if (-not $MirrorOnly -and (docker image inspect "oldrt-inplace-$v" 2>$null)) {
       "################ isolation=$iso runtime=$v mode=copy-tree, bash entry"
       $id = "$(docker run -d --isolation=$iso --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' "oldrt-inplace-$v" C:\msys64\usr\bin\bash.exe -lc $cmd 2>&1 | Select-Object -Last 1)".Trim()
       if ($id -match '^[0-9a-f]{12,}$') {
