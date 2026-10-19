@@ -34,12 +34,13 @@ $flagged = "$root\flagged.dll"; $plain = "$root\c26\msys64\usr\bin\msys-2.0.dll"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler2.exe" "$root\sampler2.cs"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\loader.exe" "$root\loader.cs"
 & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\sampler3.exe" "$root\sampler3.cs"
+& "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -nologo -out:"$root\ctrlc.exe" "$root\ctrlc.cs"
 (Get-Content "$root\probe-entry.sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\probe-entry.sh" -NoNewline
 Copy-Item "$root\probe-ps.ps1" "$root\c26\msys64\"
 foreach ($sh in 'scale.sh', 'later.sh', 'exit7.sh', 'edge.sh') { (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\$sh" -NoNewline }
 # Lower layer: the tree, L* (flagged, only here) and B* (unflagged here, flagged copies on top).
 $s = "$root\c26\samp"; New-Item -ItemType Directory "$s\lower", "$s\both" -Force | Out-Null
-Copy-Item "$root\stdin.cmd", "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd", "$root\s9-evict.cmd", "$root\s10-pending.cmd" $s
+Copy-Item "$root\stdin.cmd", "$root\sampler.exe", "$root\sampler2.exe", "$root\sampler.cmd", "$root\timeline.ps1", "$root\late.cmd", "$root\readfirst.cmd", "$root\s1-access.cmd", "$root\s2-share.cmd", "$root\s3-strace.cmd", "$root\s4-etw.cmd", "$root\s5-nosysmain.cmd", "$root\loader.exe", "$root\s6-loader.cmd", "$root\sampler3.exe", "$root\s7-ops.cmd", "$root\readtrace.ps1", "$root\s8-bits.cmd", "$root\s9-evict.cmd", "$root\s10-pending.cmd", "$root\ctrlc.exe" $s
 # Top layer: the flagged runtime over the tree's own, T* and R* (only here) and the flagged B*.
 $t = "$root\top"; New-Item -ItemType Directory "$t\samp\top", "$t\samp\both" -Force | Out-Null
 Copy-Item $flagged "$t\msys-2.0.dll"
@@ -99,6 +100,33 @@ function Probe($image, $label, [string]$entry, [string]$extra = '') {
   docker logs $id 2>&1 | Where-Object { "$_" -notmatch 'fork: retry' } | ForEach-Object { "$_" }
   "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
   $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+}
+if ($Round -eq 21) {
+  # Console events through the re-exec wrapper: a child sends Ctrl+C to the console of an entry bash started with a
+  # tty; and docker stop on an entry bash that traps HUP and TERM. The re-exec build (rc3-all-after from round 16)
+  # against the shipped runtime (rc3-top).
+  if (-not (docker image inspect rc3-all-after 2>$null)) { "rc3-all-after missing; run round 16 first"; return }
+  foreach ($sh in 'ctrlc-test.sh', 'stop-test.sh') { (Get-Content "$root\$sh" -Raw) -replace "`r`n", "`n" | Set-Content "$root\c26\msys64\$sh" -NoNewline }
+  "FROM rc3-all-after`nCOPY samp C:/samp`nCOPY msys64/ctrlc-test.sh msys64/stop-test.sh C:/msys64/" | Set-Content "$root\c26\Dockerfile.ev"
+  docker build -t rc3-all-after-ev -f "$root\c26\Dockerfile.ev" "$root\c26" | Select-Object -Last 1
+  "FROM rc3-top`nCOPY msys64/ctrlc-test.sh msys64/stop-test.sh C:/msys64/" | Set-Content "$root\c26\Dockerfile.ev2"
+  docker build -t rc3-top-ev -f "$root\c26\Dockerfile.ev2" "$root\c26" | Select-Object -Last 1
+  $Parallel = $false
+  foreach ($pair in @(@('rc3-all-after-ev', 're-exec build'), @('rc3-top-ev', 'shipped runtime'))) {
+    Probe $pair[0] "$($pair[1]): Ctrl+C sent to the console of the entry bash (tty); expect the INT trap, 'alive', exit 5" "$bash /ctrlc-test.sh" '-t'
+    "################ $($pair[1]): docker stop on an entry bash that traps HUP and TERM"
+    $id = "$(Invoke-Expression "docker run -d --isolation=$Isolation --user ContainerAdministrator -e MSYSTEM=MSYS -e 'PATH=C:\msys64\usr\bin;C:\Windows\System32;C:\Windows' $($pair[0]) $bash /stop-test.sh" 2>&1 | Select-Object -Last 1)".Trim()
+    if ($id -notmatch '^[0-9a-f]{12,}$') { "docker run failed: $id"; continue }
+    $deadline = (Get-Date).AddMinutes(3)
+    do { Start-Sleep 3; $log = docker logs $id 2>&1 | Out-String } while ($log -notmatch 'WAITING' -and (Get-Date) -lt $deadline)
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    docker stop -t 10 $id | Out-Null
+    "docker stop returned after $([int]$sw.Elapsed.TotalSeconds) s"
+    docker logs $id 2>&1 | ForEach-Object { "$_" }
+    "exit code: $(docker inspect -f '{{.State.ExitCode}}' $id)"
+    $p = Start-Process docker -ArgumentList "rm -f $id" -NoNewWindow -PassThru; if (-not $p.WaitForExit(120000)) { "docker rm did not return in 2 min; moving on" }
+  }
+  "done"; return
 }
 if ($Round -eq 20) {
   # After the entry bash (build under test, all-flagged image from round 16) has started and swept: where does a fresh
